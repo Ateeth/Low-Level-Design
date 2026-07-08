@@ -30,6 +30,9 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
     - [4.1 Strategy Pattern](#41-strategy-pattern)
       - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first)
       - [The fix — Strategy](#the-fix--strategy)
+      - [The generic Strategy template](#the-generic-strategy-template)
+      - [Real-world examples (recognize the shape, not just the robot)](#real-world-examples-recognize-the-shape-not-just-the-robot)
+      - [Core principles this pattern is built from](#core-principles-this-pattern-is-built-from)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
 
@@ -370,7 +373,7 @@ public:
 };
 ```
 
-**Association** — `Bank` knows about `Employee`, but neither owns the other's lifetime the way whole-part does. Real rule of thumb used in the playlist: _Bank can exist without Employee, but Employee cannot exist without Bank_ — so this is actually leaning toward aggregation/dependency rather than pure symmetric association. Treat plain association as the loosest, most generic "one class uses another."
+**Association** — `Bank` knows about `Employee`, but neither owns the other's lifetime the way whole-part does. Real rule of thumb used in this example: _Bank can exist without Employee, but Employee cannot exist without Bank_ — so this is actually leaning toward aggregation/dependency rather than pure symmetric association. Treat plain association as the loosest, most generic "one class uses another."
 
 ```mermaid
 classDiagram
@@ -579,8 +582,6 @@ Skipping these doesn't break your code today — it breaks it in 3 months. The c
 - **Reduced readability** — a class doing five things forces every reader to hold all five in their head
 - **Bugs that take forever to debug** — because the "one reason to change" isn't obvious anymore, a fix in one area silently breaks another
 
-SOLID is 5 principles: **S**ingle Responsibility, **O**pen/Closed, **L**iskov Substitution, **I**nterface Segregation, **D**ependency Inversion. Below covers S, O, L in depth — I and D once you've covered them in the playlist.
-
 ---
 
 ### 3.1 Single Responsibility Principle (SRP)
@@ -589,7 +590,7 @@ SOLID is 5 principles: **S**ingle Responsibility, **O**pen/Closed, **L**iskov Su
 
 **Beyond the definition:** "One reason to change" doesn't mean "one method." A class can have several methods and still satisfy SRP, as long as they all serve the _same actor/concern_. The real test: if you describe the class's job and your sentence needs an "**and**" joining two unrelated concerns ("handles cart items **and** prints invoices **and** talks to the database"), that's 3 reasons to change, not 1 — a change in the DB schema, a change in invoice formatting, and a change in cart logic would each force you to edit the same class.
 
-**TV remote analogy (from the playlist):** a remote should control the TV — not the TV _and_ the AC _and_ the soundbar. If Samsung changes their AC protocol, your TV remote class shouldn't need a rebuild.
+**TV remote analogy :** a remote should control the TV — not the TV _and_ the AC _and_ the soundbar. If Samsung changes their AC protocol, your TV remote class shouldn't need a rebuild.
 
 **Violated — `ShoppingCart` doing cart logic + printing + persistence:**
 
@@ -1176,7 +1177,7 @@ Patterns are named, reusable solutions to recurring design problems. You've actu
 
 #### Why this pattern exists — the bad design first
 
-Say you're building the `Robot` from the playlist: robots vary along 3 independent dimensions — can it walk, can it talk, can it fly. Two naive approaches, both bad:
+Say you're building a `Robot` class: robots vary along 3 independent dimensions — can it walk, can it talk, can it fly. Two naive approaches, both bad:
 
 **Bad approach #1 — boolean flags + if/else inside `Robot`:**
 
@@ -1227,7 +1228,7 @@ classDiagram
     Robot <|-- WalkingOnlyRobot
 ```
 
-The instinct to "just make a subclass for each kind of robot" seems reasonable until you realize 3 independent yes/no behaviors already need up to 2³ = 8 subclasses — and every new behavior _dimension_ (not even a new variant, a whole new dimension like "can swim") **doubles** that number again. This is the "strange loop" of combinations from the playlist — brittle, and most of these subclasses only differ in one line.
+The instinct to "just make a subclass for each kind of robot" seems reasonable until you realize 3 independent yes/no behaviors already need up to 2³ = 8 subclasses — and every new behavior _dimension_ (not even a new variant, a whole new dimension like "can swim") **doubles** that number again.
 
 **Both bad approaches share the same root cause:** behavior that varies is welded directly into the class instead of being pulled out and composed in.
 
@@ -1326,6 +1327,51 @@ int main() {
 **Ties to what you already know:** `Robot` uses composition for its varying parts, not inheritance — same reasoning as Part 2. Each strategy interface has exactly one method — ISP. `Robot` depends on `WalkableRobot*`, not `NormalWalk` directly — DIP. New behavior = new class, not a new edit — OCP. Strategy isn't new rules; it's SOLID applied specifically to "behavior that varies."
 
 **Interview signal:** if you catch yourself writing a boolean flag + `if/else` per behavior, _or_ reaching for a subclass per combination, stop and ask "is this actually a varying behavior that should be composed in in via an interface, injected at construction time?" If yes, that's Strategy — and saying this reasoning out loud (not just naming the pattern) is what actually demonstrates you understand it rather than memorized it.
+
+#### The generic Strategy template
+
+Every Strategy pattern implementation follows the same shape, regardless of domain — worth having this as the "template" you pattern-match new problems against:
+
+```mermaid
+classDiagram
+    Client o-- Strategy : has a
+    Strategy <|-- ConcreteStrategy
+    class Strategy {
+        <<abstract>>
+        +run()
+    }
+    class Client {
+        -strategy: Strategy
+        +execute()
+    }
+    class ConcreteStrategy {
+        +run()
+    }
+```
+
+- **`Client`** — the context/host object. Holds a reference to `Strategy` (composition — "has a", not "is a"), and calls `execute()`, which internally delegates to `strategy->run()`.
+- **`Strategy`** — the abstract interface declaring the one varying operation.
+- **`ConcreteStrategy`** — one class per interchangeable variant; only this layer grows as new behaviors appear, `Client` never changes.
+
+Map this onto the `Robot` example: `Robot` = `Client`, `WalkableRobot` = `Strategy`, `NormalWalk`/`NoWalk` = `ConcreteStrategy` instances. Same shape, different names.
+
+#### Real-world examples (recognize the shape, not just the robot)
+
+**Payment system:** `PaymentSystem` is the `Client`; `PaymentStrategy` is the abstract interface with `payNow()`; `UPI`, `CreditCard`, `DebitCard`, `NetBanking`, `Cash` are each a `ConcreteStrategy` overriding `payNow()` in their own way. Adding "add wallet support" next quarter = one new class, `PaymentSystem` untouched — same OCP guarantee as before.
+
+**Sorting:** a `Sorter` class with a `sort()` method that delegates to a `SortStrategy` interface — `QuickSort`, `MergeSort`, `BubbleSort` as concrete strategies. This is literally how `std::sort`-style comparator injection and Java's `Comparator` work under the hood — Strategy isn't just an interview toy, it's load-bearing in real standard libraries.
+
+**The recognition test going forward:** whenever a `Client`/context class needs to do "the same operation, but differently depending on X," ask whether X should be a `Strategy` — that single question covers payment methods, sorting, discount calculation, delivery-fee calculation, notification channels, and dozens of other LLD problems you haven't seen yet.
+
+#### Core principles this pattern is built from
+
+These aren't new — they're the same OOP/SOLID ideas from earlier parts, just named as standalone design mantras since you'll hear them again for every pattern going forward:
+
+- **Encapsulate what varies** — isolate the part of your system likely to change into its own class, away from the parts that stay stable.
+- **The solution to a bad inheritance hierarchy is not more inheritance** — this is the direct lesson from the "8-subclass explosion" bad design: adding more subclasses to fix a combinatorial problem only makes it worse.
+- **Favor composition over inheritance** — `Client` _has a_ `Strategy`, it doesn't _is-a_ `Strategy`. This is the same has-a vs is-a distinction from Part 2's UML associations.
+- **Code to an interface, not a concretion** — `Client` only ever holds a `Strategy*`, never a `ConcreteStrategy*` directly. This is DIP, restated.
+- **DRY (Don't Repeat Yourself)** — shared logic lives once, in the strategy implementation being delegated to, not copy-pasted across every place that needs that behavior.
 
 ---
 
