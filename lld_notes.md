@@ -26,6 +26,10 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [3.3.1 The 4 formal LSP sub-rules](#331-the-4-formal-lsp-sub-rules)
     - [3.4 Interface Segregation Principle (ISP)](#34-interface-segregation-principle-isp)
     - [3.5 Dependency Inversion Principle (DIP)](#35-dependency-inversion-principle-dip)
+  - [Part 4: Design Patterns](#part-4-design-patterns)
+    - [4.1 Strategy Pattern](#41-strategy-pattern)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first)
+      - [The fix — Strategy](#the-fix--strategy)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
 
@@ -1159,6 +1163,169 @@ int main() {
 **Worth noticing — this ties every SOLID principle together:** `Database` is an abstraction reached via **OCP** (new backend = new subclass, no edits), the subclasses are all safely substitutable per **LSP** (none of them throw "not supported" for `save()`), and the interface only has the one method every implementer genuinely needs, per **ISP**. DIP is often described as "the glue principle" for exactly this reason — get D right and the other four tend to already be in place.
 
 **Interview signal:** if you ever see a high-level/business-logic class with `new ConcreteThing()` written directly inside it (instead of receiving an abstraction through the constructor or a setter), that's DIP being violated in the most common, recognizable way.
+
+---
+
+## Part 4: Design Patterns
+
+Patterns are named, reusable solutions to recurring design problems. You've actually already built several of these without the name — e.g. the `Persistence`/`IPaymentStrategy` examples from OCP were Strategy all along. This section names them properly, but always starts from _why_, not just _what_.
+
+### 4.1 Strategy Pattern
+
+**Definition:** Defines a family of interchangeable algorithms/behaviors, encapsulates each one in its own class, and lets the client swap between them at runtime without changing the class that uses them.
+
+#### Why this pattern exists — the bad design first
+
+Say you're building the `Robot` from the playlist: robots vary along 3 independent dimensions — can it walk, can it talk, can it fly. Two naive approaches, both bad:
+
+**Bad approach #1 — boolean flags + if/else inside `Robot`:**
+
+```mermaid
+classDiagram
+    class Robot {
+        -canWalk: bool
+        -canTalk: bool
+        -canFly: bool
+        +walk()
+        +talk()
+        +fly()
+    }
+```
+
+```cpp
+class Robot {
+    bool canWalk, canTalk, canFly;
+public:
+    Robot(bool w, bool t, bool f) : canWalk(w), canTalk(t), canFly(f) {}
+
+    void walk() {
+        if (canWalk) cout << "Walking normally..." << endl;
+        else cout << "Cannot walk." << endl;
+    }
+    void talk() {
+        if (canTalk) cout << "Talking normally..." << endl;
+        else cout << "Cannot talk." << endl;
+    }
+    void fly() {
+        if (canFly) cout << "Flying normally..." << endl;
+        else cout << "Cannot fly." << endl;
+    }
+    // New requirement: "some robots fly with jets, some with wings"?
+    // Now you need canFly AND flyType, and every method grows another if/else branch.
+};
+```
+
+This compiles fine and even looks reasonable at 3 behaviors. The failure shows up under _change_: the moment you need a 3rd variant of any behavior (not just yes/no, but "flies with wings" vs "flies with jet"), every method's `if/else` has to grow — **OCP violated**, because supporting a new behavior variant means editing `Robot` itself, the class everything else depends on.
+
+**Bad approach #2 — inheritance per combination:**
+
+```mermaid
+classDiagram
+    Robot <|-- WalkingTalkingFlyingRobot
+    Robot <|-- WalkingTalkingRobot
+    Robot <|-- SilentFlyingRobot
+    Robot <|-- WalkingOnlyRobot
+```
+
+The instinct to "just make a subclass for each kind of robot" seems reasonable until you realize 3 independent yes/no behaviors already need up to 2³ = 8 subclasses — and every new behavior _dimension_ (not even a new variant, a whole new dimension like "can swim") **doubles** that number again. This is the "strange loop" of combinations from the playlist — brittle, and most of these subclasses only differ in one line.
+
+**Both bad approaches share the same root cause:** behavior that varies is welded directly into the class instead of being pulled out and composed in.
+
+#### The fix — Strategy
+
+The core move: identify what _varies_ (walk, talk, fly), give each its own interface, write one small concrete class per variant, and have `Robot` hold a _reference_ to each interface (composition) instead of implementing the behavior or inheriting a fixed combination of it.
+
+**Key components:**
+
+- **Strategy interface** per varying behavior (`WalkableRobot`, `TalkableRobot`, `FlyableRobot`) — each declares one method
+- **Concrete strategies** implementing each variant (`NormalWalk`/`NoWalk`, `NormalTalk`/`NoTalk`, `NormalFly`/`NoFly`)
+- **Context** (`Robot`) — holds references to strategy objects via composition, delegates calls, never implements the varying behavior itself
+
+```mermaid
+classDiagram
+    Robot o-- WalkableRobot
+    Robot o-- TalkableRobot
+    Robot o-- FlyableRobot
+    WalkableRobot <|-- NormalWalk
+    WalkableRobot <|-- NoWalk
+    TalkableRobot <|-- NormalTalk
+    TalkableRobot <|-- NoTalk
+    FlyableRobot <|-- NormalFly
+    FlyableRobot <|-- NoFly
+    Robot <|-- CompanionRobot
+    Robot <|-- WorkerRobot
+
+    class WalkableRobot { <<abstract>> +walk() }
+    class TalkableRobot { <<abstract>> +talk() }
+    class FlyableRobot { <<abstract>> +fly() }
+    class Robot {
+        <<abstract>>
+        #walkBehavior: WalkableRobot
+        #talkBehavior: TalkableRobot
+        #flyBehavior: FlyableRobot
+        +walk()
+        +talk()
+        +fly()
+        +projection()*
+    }
+```
+
+```cpp
+class WalkableRobot {
+public:
+    virtual void walk() = 0;
+    virtual ~WalkableRobot() {}
+};
+class NormalWalk : public WalkableRobot {
+public:
+    void walk() override { cout << "Walking normally..." << endl; }
+};
+class NoWalk : public WalkableRobot {
+public:
+    void walk() override { cout << "Cannot walk." << endl; }
+};
+// TalkableRobot / FlyableRobot follow the exact same shape (NormalTalk/NoTalk, NormalFly/NoFly)
+
+class Robot {
+protected:
+    WalkableRobot* walkBehavior;
+    TalkableRobot* talkBehavior;
+    FlyableRobot* flyBehavior;
+public:
+    Robot(WalkableRobot* w, TalkableRobot* t, FlyableRobot* f)
+        : walkBehavior(w), talkBehavior(t), flyBehavior(f) {}
+    void walk() { walkBehavior->walk(); }   // delegates, doesn't implement
+    void talk() { talkBehavior->talk(); }
+    void fly()  { flyBehavior->fly(); }
+    virtual void projection() = 0;
+};
+
+class CompanionRobot : public Robot {
+public:
+    CompanionRobot(WalkableRobot* w, TalkableRobot* t, FlyableRobot* f) : Robot(w, t, f) {}
+    void projection() override { cout << "Displaying friendly companion features..." << endl; }
+};
+class WorkerRobot : public Robot {
+public:
+    WorkerRobot(WalkableRobot* w, TalkableRobot* t, FlyableRobot* f) : Robot(w, t, f) {}
+    void projection() override { cout << "Displaying worker efficiency stats..." << endl; }
+};
+
+int main() {
+    // Mix and match freely — no new class needed per combination
+    Robot* robot1 = new CompanionRobot(new NormalWalk(), new NormalTalk(), new NoFly());
+    robot1->walk(); robot1->talk(); robot1->fly(); robot1->projection();
+
+    Robot* robot2 = new WorkerRobot(new NoWalk(), new NoTalk(), new NormalFly());
+    robot2->walk(); robot2->talk(); robot2->fly(); robot2->projection();
+}
+```
+
+**Why this actually fixes both bad approaches:** a new fly variant (`FlyWithJet`) is one new class implementing `FlyableRobot` — zero edits to `Robot`, zero new subclasses, zero growing `if/else`. The 8-subclass explosion collapses to 2 robot _types_ (`CompanionRobot`, `WorkerRobot`) × freely composable behaviors, because each dimension varies independently instead of multiplying combinatorially.
+
+**Ties to what you already know:** `Robot` uses composition for its varying parts, not inheritance — same reasoning as Part 2. Each strategy interface has exactly one method — ISP. `Robot` depends on `WalkableRobot*`, not `NormalWalk` directly — DIP. New behavior = new class, not a new edit — OCP. Strategy isn't new rules; it's SOLID applied specifically to "behavior that varies."
+
+**Interview signal:** if you catch yourself writing a boolean flag + `if/else` per behavior, _or_ reaching for a subclass per combination, stop and ask "is this actually a varying behavior that should be composed in in via an interface, injected at construction time?" If yes, that's Strategy — and saying this reasoning out loud (not just naming the pattern) is what actually demonstrates you understand it rather than memorized it.
 
 ---
 
