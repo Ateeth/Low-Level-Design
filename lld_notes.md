@@ -18,7 +18,6 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
     - [2.2 Class Associations — the 4 relationship types](#22-class-associations--the-4-relationship-types)
     - [2.3 More examples — from problems you'll actually build](#23-more-examples--from-problems-youll-actually-build)
     - [2.4 Sequence Diagram — behavior over time](#24-sequence-diagram--behavior-over-time)
-    - [Not essential for interviews (flagging, not skipping)](#not-essential-for-interviews-flagging-not-skipping)
   - [Part 3: SOLID Principles](#part-3-solid-principles)
     - [Why design principles matter](#why-design-principles-matter)
     - [3.1 Single Responsibility Principle (SRP)](#31-single-responsibility-principle-srp)
@@ -556,17 +555,13 @@ sequenceDiagram
     deactivate ATM
 ```
 
-**How to approach building one (the method from the playlist, generalized):**
+**How to approach building one (generalized):**
 
 1. Nail down the use case flow in plain English first (e.g. "user withdraws cash from ATM").
 2. Identify the objects involved — here: `User`, `ATM`, `Transaction`, `Account`, `CashDispenser`.
 3. Draw lifelines for each, then add messages in the order they'd actually be called, with activation bars showing who's "busy" at each point.
 
 **Interview relevance:** you won't usually be asked to draw a full sequence diagram from scratch in a 45-minute LLD round, but interviewers do expect you to **verbally walk through** the sequence of calls for at least one core use case after you've drawn the class diagram — this is exactly that skill, just spoken instead of drawn.
-
-### Not essential for interviews (flagging, not skipping)
-
-If the playlist covers **use-case diagrams** or **activity diagrams** later, you can skim those — they're more about requirements documentation / SDLC process than something you'll be asked to produce live in an LLD interview. Worth knowing they exist, not worth deep notes. Class diagrams and sequence diagrams are the two that actually get tested.
 
 ---
 
@@ -1164,14 +1159,6 @@ int main() {
 **Worth noticing — this ties every SOLID principle together:** `Database` is an abstraction reached via **OCP** (new backend = new subclass, no edits), the subclasses are all safely substitutable per **LSP** (none of them throw "not supported" for `save()`), and the interface only has the one method every implementer genuinely needs, per **ISP**. DIP is often described as "the glue principle" for exactly this reason — get D right and the other four tend to already be in place.
 
 **Interview signal:** if you ever see a high-level/business-logic class with `new ConcreteThing()` written directly inside it (instead of receiving an abstraction through the constructor or a setter), that's DIP being violated in the most common, recognizable way.
-
----
-
-Two days for OOP + UML + all of SOLID is a genuinely fast pace — good work. The flip side of moving that fast is exactly what you said: it won't stick without revisiting. A lightweight way to do that without slowing down the playlist: before you start Wednesday's session, skim just the **Interview signal** callouts across this doc (one per subsection) — they're written as the fastest way to recognize each principle in the wild, so a quick pass over just those refreshes all of SOLID + UML in a couple of minutes.
-
----
-
-We'll build on all three parts when we get to design patterns and full LLD problems (Parking Lot, Elevator System, etc.) — patterns like Strategy and State are really just specific, named ways of using the associations and polymorphism you've already learned.
 
 ---
 
