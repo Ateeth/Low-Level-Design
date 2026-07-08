@@ -4,26 +4,30 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
 
 ## Index
 
-- [Part 1: OOP Fundamentals](#part-1-oop-fundamentals)
-  - [1. Encapsulation](#1-encapsulation)
-  - [2. Abstraction](#2-abstraction)
-  - [3. Inheritance](#3-inheritance)
-  - [4. Polymorphism](#4-polymorphism)
-  - [OOP Quick Recap Table](#oop-quick-recap-table)
+- [LLD Interview Prep — Running Notes (C++)](#lld-interview-prep--running-notes-c)
+  - [Index](#index)
+  - [Part 1: OOP Fundamentals](#part-1-oop-fundamentals)
+    - [1. Encapsulation](#1-encapsulation)
+    - [2. Abstraction](#2-abstraction)
+    - [3. Inheritance](#3-inheritance)
+    - [4. Polymorphism](#4-polymorphism)
+    - [OOP Quick Recap Table](#oop-quick-recap-table)
   - [Where OOP connects to SOLID (preview)](#where-oop-connects-to-solid-preview)
-- [Part 2: UML Diagrams](#part-2-uml-diagrams)
-  - [2.1 Class Diagram — structure](#21-class-diagram--structure)
-  - [2.2 Class Associations — the 4 relationship types](#22-class-associations--the-4-relationship-types)
-  - [2.3 More examples — from problems you'll actually build](#23-more-examples--from-problems-youll-actually-build)
-  - [2.4 Sequence Diagram — behavior over time](#24-sequence-diagram--behavior-over-time)
-- [Part 3: SOLID Principles](#part-3-solid-principles)
-  - [Why design principles matter](#why-design-principles-matter)
-  - [3.1 Single Responsibility Principle (SRP)](#31-single-responsibility-principle-srp)
-  - [3.2 Open/Closed Principle (OCP)](#32-openclosed-principle-ocp)
-  - [3.3 Liskov Substitution Principle (LSP)](#33-liskov-substitution-principle-lsp)
-    - [3.3.1 The 4 formal LSP sub-rules](#331-the-4-formal-lsp-sub-rules)
-  - [3.4 Interface Segregation Principle (ISP)](#34-interface-segregation-principle-isp)
-  - [3.5 Dependency Inversion Principle (DIP)](#35-dependency-inversion-principle-dip)
+  - [Part 2: UML Diagrams](#part-2-uml-diagrams)
+    - [2.1 Class Diagram — structure](#21-class-diagram--structure)
+    - [2.2 Class Associations — the 4 relationship types](#22-class-associations--the-4-relationship-types)
+    - [2.3 More examples — from problems you'll actually build](#23-more-examples--from-problems-youll-actually-build)
+    - [2.4 Sequence Diagram — behavior over time](#24-sequence-diagram--behavior-over-time)
+  - [Part 3: SOLID Principles](#part-3-solid-principles)
+    - [Why design principles matter](#why-design-principles-matter)
+    - [3.1 Single Responsibility Principle (SRP)](#31-single-responsibility-principle-srp)
+    - [3.2 Open/Closed Principle (OCP)](#32-openclosed-principle-ocp)
+    - [3.3 Liskov Substitution Principle (LSP)](#33-liskov-substitution-principle-lsp)
+      - [3.3.1 The 4 formal LSP sub-rules](#331-the-4-formal-lsp-sub-rules)
+    - [3.4 Interface Segregation Principle (ISP)](#34-interface-segregation-principle-isp)
+    - [3.5 Dependency Inversion Principle (DIP)](#35-dependency-inversion-principle-dip)
+  - [LLD Problems — Solved](#lld-problems--solved)
+    - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
 
 ---
 
@@ -551,7 +555,7 @@ sequenceDiagram
     deactivate ATM
 ```
 
-**How to approach building one (the method from the playlist, generalized):**
+**How to approach building one (generalized):**
 
 1. Nail down the use case flow in plain English first (e.g. "user withdraws cash from ATM").
 2. Identify the objects involved — here: `User`, `ATM`, `Transaction`, `Account`, `CashDispenser`.
@@ -1157,3 +1161,200 @@ int main() {
 **Interview signal:** if you ever see a high-level/business-logic class with `new ConcreteThing()` written directly inside it (instead of receiving an abstraction through the constructor or a setter), that's DIP being violated in the most common, recognizable way.
 
 ---
+
+## LLD Problems — Solved
+
+This section is independent of the "Part N" theory tracks above — it just grows by one problem every time you finish one, regardless of which theory part you're currently on.
+
+### Problem 1: Document Editor (Google Docs)
+
+**Requirements:** Support text and image elements now; must be scalable to support tables, video, fonts, newlines, tabs later without rearchitecting.
+
+**v1 — naive design, and why it fails:**
+A single `DocumentEditor` class stored elements as raw strings and detected "is this an image" by checking the file extension inside `renderDocument()`.
+
+```mermaid
+classDiagram
+    class DocumentEditor {
+        -documentElements: vector~string~
+        -renderedDocument: string
+        +addText(text)
+        +addImage(imagePath)
+        +renderDocument(): string
+        +saveToFile()
+    }
+```
+
+Notice there's only **one class** and **no relationships to show** — that itself is the smell. Everything (storage, type-detection, rendering, saving) is crammed into one box instead of being split across collaborating classes.
+
+```cpp
+class DocumentEditor {
+    vector<string> documentElements;
+    string renderedDocument;
+public:
+    void addText(string text)   { documentElements.push_back(text); }
+    void addImage(string path)  { documentElements.push_back(path); } // no type info kept!
+
+    string renderDocument() {
+        if (renderedDocument.empty()) {
+            string result;
+            for (auto element : documentElements) {
+                // detecting "is this an image" by string-matching the extension —
+                // fragile, and this if/else grows with every new element type
+                if (element.size() > 4 && (element.substr(element.size()-4) == ".jpg" ||
+                                            element.substr(element.size()-4) == ".png")) {
+                    result += "[Image: " + element + "]\n";
+                } else {
+                    result += element + "\n";
+                }
+            }
+            renderedDocument = result;
+        }
+        return renderedDocument;
+    }
+
+    void saveToFile() {
+        ofstream file("document.txt");
+        file << renderDocument();
+    }
+};
+```
+
+- **SRP violated** — one class does element storage, type-detection, rendering, _and_ file saving.
+- **OCP violated** — adding a new element type (table, video) means editing the `if/else` inside `renderDocument()` again. Worse, storing everything as raw `string` means there's no real way to distinguish a `TableElement` from text without more fragile string-matching.
+
+**v2 — the solution:**
+
+```mermaid
+classDiagram
+    DocumentElement <|-- TextElement
+    DocumentElement <|-- ImageElement
+    DocumentElement <|-- NewLineElement
+    DocumentElement <|-- TabSpaceElement
+    Document o-- DocumentElement
+    Persistence <|-- FileStorage
+    Persistence <|-- DBStorage
+    DocumentEditor --> Document
+    DocumentEditor --> Persistence
+
+    class DocumentElement {
+        <<abstract>>
+        +render(): string
+    }
+    class Document {
+        -elements: vector~DocumentElement~
+        +addElement(e)
+        +render(): string
+    }
+    class Persistence {
+        <<abstract>>
+        +save(data)
+    }
+    class DocumentEditor {
+        +addText(text)
+        +addImage(path)
+        +addNewLine()
+        +addTabSpace()
+        +renderDocument(): string
+        +saveDocument()
+    }
+```
+
+```cpp
+class DocumentElement {
+public:
+    virtual string render() = 0;
+};
+class TextElement : public DocumentElement {
+    string text;
+public:
+    TextElement(string t) : text(t) {}
+    string render() override { return text; }
+};
+class ImageElement : public DocumentElement {
+    string path;
+public:
+    ImageElement(string p) : path(p) {}
+    string render() override { return "[Image: " + path + "]"; }
+};
+class NewLineElement : public DocumentElement {
+public:
+    string render() override { return "\n"; }
+};
+class TabSpaceElement : public DocumentElement {
+public:
+    string render() override { return "\t"; }
+};
+
+// Document holds elements AND renders them by delegating to each element
+class Document {
+    vector<DocumentElement*> elements;
+public:
+    void addElement(DocumentElement* e) { elements.push_back(e); }
+    string render() {
+        string result;
+        for (auto e : elements) result += e->render();
+        return result;
+    }
+};
+
+// Persistence abstraction — OCP: new backend = new subclass
+class Persistence {
+public:
+    virtual void save(string data) = 0;
+};
+class FileStorage : public Persistence {
+public:
+    void save(string data) override { /* write to file */ }
+};
+class DBStorage : public Persistence {
+public:
+    void save(string data) override { /* write to DB */ }
+};
+
+// DocumentEditor is the client-facing class — adds elements, and delegates render/save
+class DocumentEditor {
+    Document* document;
+    Persistence* storage;
+    string renderedDocument;
+public:
+    DocumentEditor(Document* d, Persistence* s) : document(d), storage(s) {}
+    void addText(string t)     { document->addElement(new TextElement(t)); }
+    void addImage(string p)    { document->addElement(new ImageElement(p)); }
+    void addNewLine()          { document->addElement(new NewLineElement()); }
+    void addTabSpace()         { document->addElement(new TabSpaceElement()); }
+
+    string renderDocument() {
+        if (renderedDocument.empty()) renderedDocument = document->render();
+        return renderedDocument;
+    }
+    void saveDocument() { storage->save(renderDocument()); }
+};
+
+int main() {
+    Document* document = new Document();
+    Persistence* persistence = new FileStorage();
+    DocumentEditor* editor = new DocumentEditor(document, persistence);
+
+    editor->addText("Hello, world!");
+    editor->addNewLine();
+    editor->addImage("picture.jpg");
+
+    cout << editor->renderDocument() << endl;
+    editor->saveDocument();
+}
+```
+
+**How this satisfies SOLID:**
+
+| Principle | How                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SRP       | `TextElement`/etc. only render themselves; `Document` only stores + delegates rendering; `Persistence` only saves; `DocumentEditor` is the one client-facing entry point |
+| OCP       | New element (`TableElement`) or new backend (`RedisStorage`) = new subclass, zero edits to existing classes                                                              |
+| LSP       | Every `DocumentElement` genuinely implements `render()`, every `Persistence` genuinely implements `save()` — no `logic_error("not supported")` anywhere                  |
+| ISP       | `DocumentElement` has exactly one method, `Persistence` has exactly one — nobody implements something irrelevant                                                         |
+| DIP       | `DocumentEditor` depends on `Document*` and `Persistence*` (abstractions) — never on `FileStorage` or a concrete element type directly                                   |
+
+**Optional further enhancement (not required as-is):** `DocumentEditor` here still knows about both `Document` _and_ `Persistence` — technically a mild Principle of Least Knowledge (Law of Demeter) stretch, since it's reaching slightly beyond just "add elements" into orchestrating render+save too. The video's suggested fix is to split `render()` into its own `DocumentRenderer` class and introduce a separate `Client` class that owns `Document`, `DocumentRenderer`, `Persistence`, and `DocumentEditor`, calling each in the right order — so `DocumentEditor` only ever touches `Document`.
+
+This is a legitimate improvement, but treat it as optional, not mandatory: it trades one extra coordination-only class for slightly looser coupling. In an interview, the v2 solution above is already solid enough to defend on its own — mentioning this as a "here's a further refinement I'd consider, with this trade-off" is a good verbal addition if there's time, not something you need to build by default.
