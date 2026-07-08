@@ -33,6 +33,13 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [The generic Strategy template](#the-generic-strategy-template)
       - [Real-world examples (recognize the shape, not just the robot)](#real-world-examples-recognize-the-shape-not-just-the-robot)
       - [Core principles this pattern is built from](#core-principles-this-pattern-is-built-from)
+    - [4.2 Factory Pattern](#42-factory-pattern)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first-1)
+      - [4.2.1 Simple Factory](#421-simple-factory)
+      - [4.2.2 Factory Method](#422-factory-method)
+      - [4.2.3 Abstract Factory](#423-abstract-factory)
+      - [Simple Factory vs Factory Method vs Abstract Factory — the actual difference](#simple-factory-vs-factory-method-vs-abstract-factory--the-actual-difference)
+      - [Real-world example — Notification system](#real-world-example--notification-system)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
 
@@ -1372,6 +1379,223 @@ These aren't new — they're the same OOP/SOLID ideas from earlier parts, just n
 - **Favor composition over inheritance** — `Client` _has a_ `Strategy`, it doesn't _is-a_ `Strategy`. This is the same has-a vs is-a distinction from Part 2's UML associations.
 - **Code to an interface, not a concretion** — `Client` only ever holds a `Strategy*`, never a `ConcreteStrategy*` directly. This is DIP, restated.
 - **DRY (Don't Repeat Yourself)** — shared logic lives once, in the strategy implementation being delegated to, not copy-pasted across every place that needs that behavior.
+
+---
+
+### 4.2 Factory Pattern
+
+**Definition:** Separates _business logic_ from _object creation logic_. The client asks for what it needs; something else decides which concrete class to instantiate and hands back the finished object. The client never says `new ConcreteThing()` itself.
+
+**Where this sits relative to Strategy:** Strategy assumes the object already exists and varies _how it behaves_. Factory doesn't care about behavior yet — it answers a question one step earlier: **which concrete object should even get created**. You'll often see both in the same system: a Factory creates a Strategy object, and the client later calls a method on it.
+
+#### Why this pattern exists — the bad design first
+
+```cpp
+// Bad: object-creation logic scattered wherever a Burger is needed
+class Client {
+public:
+    void orderBurger(string type) {
+        Burger* burger;
+        if (type == "basic") burger = new BasicBurger();
+        else if (type == "standard") burger = new StandardBurger();
+        else if (type == "premium") burger = new PremiumBurger();
+        // Every place in the codebase that creates a burger repeats this if/else.
+        // Adding "deluxe" means finding and editing all of them — OCP violated
+        // everywhere at once, not just in one class.
+        burger->prepare();
+    }
+};
+```
+
+The client is doing two unrelated jobs — deciding _what to order_ (business logic) and deciding _how to build it_ (construction logic). That's SRP violated too, and it gets worse the moment object creation is needed in more than one place.
+
+#### 4.2.1 Simple Factory
+
+Not officially one of the 23 GoF patterns — more of a common first step: pull the `if/else` out of the client into one dedicated factory class.
+
+```mermaid
+classDiagram
+    BurgerFactory --> Burger : creates
+    Burger <|-- BasicBurger
+    Burger <|-- StandardBurger
+    Burger <|-- PremiumBurger
+    class Burger { <<abstract>> +prepare() }
+    class BurgerFactory { +createBurger(type): Burger }
+```
+
+```cpp
+class Burger {
+public:
+    virtual void prepare() = 0;
+    virtual ~Burger() {}
+};
+class BasicBurger : public Burger {
+public:
+    void prepare() override { cout << "Preparing Basic Burger..." << endl; }
+};
+class StandardBurger : public Burger {
+public:
+    void prepare() override { cout << "Preparing Standard Burger..." << endl; }
+};
+class PremiumBurger : public Burger {
+public:
+    void prepare() override { cout << "Preparing Premium Burger..." << endl; }
+};
+
+class BurgerFactory {
+public:
+    Burger* createBurger(string& type) {
+        if (type == "basic") return new BasicBurger();
+        if (type == "standard") return new StandardBurger();
+        if (type == "premium") return new PremiumBurger();
+        cout << "Invalid burger type!" << endl;
+        return nullptr;
+    }
+};
+
+int main() {
+    string type = "standard";
+    BurgerFactory factory;
+    Burger* burger = factory.createBurger(type);
+    burger->prepare();
+}
+```
+
+**What this fixes, and what it doesn't:** the client no longer knows _how_ burgers are built — that's real progress. But the `if/else` still exists, just relocated into `BurgerFactory`. Adding a new burger type still means editing this one class. That's fine for a single, stable product line — but it doesn't scale if you also need entirely different _families_ of creation logic (see Factory Method below).
+
+#### 4.2.2 Factory Method
+
+Makes the _factory itself_ abstract. Instead of one factory with an `if/else`, you get one factory **interface**, and each concrete factory owns its own creation logic — selecting _which factory_ to use becomes a polymorphism decision instead of a string check.
+
+```mermaid
+classDiagram
+    BurgerFactory <|-- SinghBurger
+    BurgerFactory <|-- KingBurger
+    Burger <|-- BasicBurger
+    Burger <|-- StandardBurger
+    Burger <|-- PremiumBurger
+    Burger <|-- BasicWheatBurger
+    Burger <|-- StandardWheatBurger
+    Burger <|-- PremiumWheatBurger
+    BurgerFactory --> Burger : creates
+    class BurgerFactory { <<abstract>> +createBurger(type): Burger }
+    class Burger { <<abstract>> +prepare() }
+```
+
+```cpp
+class BurgerFactory {
+public:
+    virtual Burger* createBurger(string& type) = 0;
+};
+
+class SinghBurger : public BurgerFactory {
+public:
+    Burger* createBurger(string& type) override {
+        if (type == "basic") return new BasicBurger();
+        if (type == "standard") return new StandardBurger();
+        if (type == "premium") return new PremiumBurger();
+        return nullptr;
+    }
+};
+class KingBurger : public BurgerFactory {
+public:
+    Burger* createBurger(string& type) override {
+        if (type == "basic") return new BasicWheatBurger();
+        if (type == "standard") return new StandardWheatBurger();
+        if (type == "premium") return new PremiumWheatBurger();
+        return nullptr;
+    }
+};
+
+int main() {
+    string type = "basic";
+    BurgerFactory* myFactory = new SinghBurger(); // pick the brand once, polymorphically
+    Burger* burger = myFactory->createBurger(type);
+    burger->prepare();
+}
+```
+
+**Why this is a real improvement, not just extra indirection:** adding a whole new _brand_ (`JuniorBurger`) is now a new class implementing `BurgerFactory` — zero edits to `SinghBurger` or `KingBurger`. Each brand's size-based branching (`basic`/`standard`/`premium`) stays localized to its own factory, so a change to Singh's recipe logic can never accidentally touch King's. Simple Factory couldn't give you that isolation — everything lived in one class.
+
+#### 4.2.3 Abstract Factory
+
+Same idea as Factory Method, but the factory now creates a **family of related products**, not just one. One factory call site produces multiple objects that are meant to go together.
+
+```mermaid
+classDiagram
+    MealFactory <|-- SinghBurger
+    MealFactory <|-- KingBurger
+    Burger <|-- BasicBurger
+    Burger <|-- BasicWheatBurger
+    GarlicBread <|-- BasicGarlicBread
+    GarlicBread <|-- BasicWheatGarlicBread
+    MealFactory --> Burger : creates
+    MealFactory --> GarlicBread : creates
+    class MealFactory {
+        <<abstract>>
+        +createBurger(type): Burger
+        +createGarlicBread(type): GarlicBread
+    }
+```
+
+```cpp
+class Burger { public: virtual void prepare() = 0; };
+class BasicBurger : public Burger { public: void prepare() override { cout << "Basic Burger\n"; } };
+class BasicWheatBurger : public Burger { public: void prepare() override { cout << "Basic Wheat Burger\n"; } };
+
+class GarlicBread { public: virtual void prepare() = 0; };
+class BasicGarlicBread : public GarlicBread { public: void prepare() override { cout << "Basic Garlic Bread\n"; } };
+class BasicWheatGarlicBread : public GarlicBread { public: void prepare() override { cout << "Basic Wheat Garlic Bread\n"; } };
+
+class MealFactory {
+public:
+    virtual Burger* createBurger(string& type) = 0;
+    virtual GarlicBread* createGarlicBread(string& type) = 0;
+};
+
+class SinghBurger : public MealFactory {
+public:
+    Burger* createBurger(string& type) override { return new BasicBurger(); /* + other types */ }
+    GarlicBread* createGarlicBread(string& type) override { return new BasicGarlicBread(); }
+};
+class KingBurger : public MealFactory {
+public:
+    Burger* createBurger(string& type) override { return new BasicWheatBurger(); }
+    GarlicBread* createGarlicBread(string& type) override { return new BasicWheatGarlicBread(); }
+};
+
+int main() {
+    MealFactory* mealFactory = new KingBurger();
+    string b = "basic", g = "basic";
+    mealFactory->createBurger(b)->prepare();
+    mealFactory->createGarlicBread(g)->prepare();
+    // Picking KingBurger guarantees everything created is consistently "wheat family" —
+    // impossible to accidentally mix a KingBurger patty with a Singh garlic bread.
+}
+```
+
+**The real value here:** consistency across a _family_. Once you pick `KingBurger` as your factory, every product it creates belongs to the same family (wheat variants) automatically — you can't accidentally end up with mismatched products, because the factory itself is the thing enforcing that grouping.
+
+#### Simple Factory vs Factory Method vs Abstract Factory — the actual difference
+
+| Variant          | What decides the concrete class                          | Scope                                                                |
+| ---------------- | -------------------------------------------------------- | -------------------------------------------------------------------- |
+| Simple Factory   | One factory class, `if/else` by input                    | 1 product type                                                       |
+| Factory Method   | Which concrete _factory subclass_ you use (polymorphism) | 1 product type, multiple "families"/brands                           |
+| Abstract Factory | Which concrete _factory subclass_ you use                | Multiple related product types, created together as a consistent set |
+
+#### Real-world example — Notification system
+
+**As Factory:** `NotificationFactory` decides which concrete `Notification` object (`SMSNotification`, `PushNotification`, `EmailNotification`) to _instantiate_, based on user preference or event type, and hands it back to whoever asked.
+
+**Your question — could this instead be Strategy?** Yes, genuinely — and this ambiguity is worth sitting with rather than resolving too quickly:
+
+- If the concern is **"I already have a `NotificationSender`, and I just need to swap which channel it uses to `send()` a message"** — that's Strategy. The object exists; only the behavior varies.
+- If the concern is **"depending on the event, I need to construct the right kind of `Notification` object in the first place, possibly to queue it, log it, or pass it somewhere else before anything is sent"** — that's Factory. The point in question is _which class gets instantiated_, not _what an existing object does_.
+
+**In practice, they usually compose rather than compete:** a very common real design is `NotificationFactory` (Factory) that _creates_ a `NotificationStrategy` object (Strategy), which the caller then invokes `send()` on. Factory answers "which object do I get," Strategy answers "what does that object do when called" — they're solving adjacent problems, not the same one, which is exactly why they show up together so often.
+
+**Interview signal:** if you're debating "is this Strategy or Factory," ask _what's actually varying_. If it's "how an operation behaves" → Strategy. If it's "which concrete class to instantiate, decoupled from where it's used" → Factory. If both questions apply to the same problem at different points, that's not a contradiction — use both.
 
 ---
 
