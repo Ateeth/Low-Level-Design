@@ -40,6 +40,15 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [4.2.3 Abstract Factory](#423-abstract-factory)
       - [Simple Factory vs Factory Method vs Abstract Factory — the actual difference](#simple-factory-vs-factory-method-vs-abstract-factory--the-actual-difference)
       - [Real-world example — Notification system](#real-world-example--notification-system)
+    - [4.3 Singleton Pattern](#43-singleton-pattern)
+      - [The mechanics worth understanding first — stack vs heap](#the-mechanics-worth-understanding-first--stack-vs-heap)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first-2)
+      - [4.3.1 Simple Singleton (lazy initialization, not thread-safe)](#431-simple-singleton-lazy-initialization-not-thread-safe)
+      - [4.3.2 Thread-safe Singleton (mutex-locked)](#432-thread-safe-singleton-mutex-locked)
+      - [4.3.3 Double-checked locking Singleton](#433-double-checked-locking-singleton)
+      - [4.3.4 Eager initialization Singleton](#434-eager-initialization-singleton)
+      - [Comparing all four variants](#comparing-all-four-variants)
+      - [Real-world examples](#real-world-examples)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
 
@@ -1596,6 +1605,176 @@ int main() {
 **In practice, they usually compose rather than compete:** a very common real design is `NotificationFactory` (Factory) that _creates_ a `NotificationStrategy` object (Strategy), which the caller then invokes `send()` on. Factory answers "which object do I get," Strategy answers "what does that object do when called" — they're solving adjacent problems, not the same one, which is exactly why they show up together so often.
 
 **Interview signal:** if you're debating "is this Strategy or Factory," ask _what's actually varying_. If it's "how an operation behaves" → Strategy. If it's "which concrete class to instantiate, decoupled from where it's used" → Factory. If both questions apply to the same problem at different points, that's not a contradiction — use both.
+
+---
+
+### 4.3 Singleton Pattern
+
+**Definition:** Ensures a class has exactly one instance across the entire program, and provides a single global access point to it. Every call to get an instance of this class returns the _same_ object, never a new one.
+
+#### The mechanics worth understanding first — stack vs heap
+
+Before the pattern itself, the stack/heap distinction you noted is worth locking in, since it's _why_ Singleton needs a pointer + static storage at all:
+
+```cpp
+A* a = new A();
+```
+
+- `new A()` allocates the actual `A` object on the **heap** and runs `A`'s constructor.
+- `a` itself — the pointer/reference — lives on the **stack**, and just holds the heap address.
+- Every subsequent `new A()` call repeats this: new heap memory, new object, new address. Nothing stops you from creating as many `A`s as you want — that's exactly the gap Singleton closes.
+
+**Singleton's actual mechanism:** make the constructor `private` (so nothing outside the class can call `new Singleton()` directly), store the one allowed instance in a `static` pointer (shared across all callers, not per-object), and expose a `static getInstance()` method that creates the object _once_ and returns that same stored pointer on every future call.
+
+#### Why this pattern exists — the bad design first
+
+```cpp
+class NoSingleton {
+public:
+    NoSingleton() { cout << "New Object created." << endl; }
+};
+
+int main() {
+    NoSingleton* s1 = new NoSingleton();
+    NoSingleton* s2 = new NoSingleton();
+    cout << (s1 == s2) << endl; // false — two separate objects
+}
+```
+
+Nothing here is technically broken — it compiles, it runs. The problem shows up when this class represents something that **should** be unique by nature: a logger, a single DB connection pool, a config manager. Two separate `Logger` instances might each buffer writes independently and clobber each other's output; two separate DB connection managers might each open their own pool and exhaust connection limits. The bug isn't in this class — it's that nothing _prevents_ creating a second one when the whole point was that a second one shouldn't exist.
+
+#### 4.3.1 Simple Singleton (lazy initialization, not thread-safe)
+
+```mermaid
+classDiagram
+    class Singleton {
+        -instance: Singleton$
+        -Singleton()
+        +getInstance(): Singleton$
+    }
+```
+
+```cpp
+class Singleton {
+private:
+    static Singleton* instance;
+    Singleton() { cout << "Singleton Constructor called" << endl; }
+public:
+    static Singleton* getInstance() {
+        if (instance == nullptr) {
+            instance = new Singleton();
+        }
+        return instance;
+    }
+};
+Singleton* Singleton::instance = nullptr;
+
+int main() {
+    Singleton* s1 = Singleton::getInstance();
+    Singleton* s2 = Singleton::getInstance();
+    cout << (s1 == s2) << endl; // true
+}
+```
+
+**Private constructor** blocks `new Singleton()` from outside. **`getInstance()`** creates the object only the first time it's called (lazy — you pay the construction cost only if/when it's actually needed), then just hands back the stored pointer forever after.
+
+**The gap:** this works fine single-threaded, but breaks under concurrency. If two threads call `getInstance()` at nearly the same moment, both can see `instance == nullptr` _before either has finished assigning it_, and both proceed to construct separate objects — silently defeating the entire point of Singleton. This is a real, common interview follow-up: _"is this thread-safe?"_
+
+#### 4.3.2 Thread-safe Singleton (mutex-locked)
+
+```mermaid
+classDiagram
+    class Singleton {
+        -instance: Singleton$
+        -mtx: mutex$
+        -Singleton()
+        +getInstance(): Singleton$
+    }
+```
+
+```cpp
+class Singleton {
+private:
+    static Singleton* instance;
+    static mutex mtx;
+    Singleton() { cout << "Singleton Constructor Called!" << endl; }
+public:
+    static Singleton* getInstance() {
+        lock_guard<mutex> lock(mtx); // only one thread can be inside here at a time
+        if (instance == nullptr) {
+            instance = new Singleton();
+        }
+        return instance;
+    }
+};
+Singleton* Singleton::instance = nullptr;
+mutex Singleton::mtx;
+```
+
+The lock forces threads to check-and-create one at a time, closing the race condition from 4.3.1. **The new cost:** _every single call_ to `getInstance()` now acquires the mutex — even the millionth call, long after `instance` was already created, still pays locking overhead it no longer needs.
+
+#### 4.3.3 Double-checked locking Singleton
+
+```cpp
+class Singleton {
+private:
+    static Singleton* instance;
+    static mutex mtx;
+    Singleton() { cout << "Singleton Constructor Called!" << endl; }
+public:
+    static Singleton* getInstance() {
+        if (instance == nullptr) {           // check #1 — no locking, fast path
+            lock_guard<mutex> lock(mtx);     // only lock if it might still need creating
+            if (instance == nullptr) {       // check #2 — after acquiring the lock, re-verify
+                instance = new Singleton();
+            }
+        }
+        return instance;
+    }
+};
+```
+
+**Why the _second_ check is necessary, not redundant:** between thread A seeing `instance == nullptr` (check #1) and actually acquiring the lock, thread B might have already acquired the lock first and fully constructed the instance. Without re-checking after the lock, thread A would construct a second object anyway. The second check inside the lock is what actually prevents the race; the first check outside the lock is purely a performance shortcut — most calls after the first one skip locking entirely.
+
+**Worth knowing as a caveat (real-world correctness, not just interview trivia):** in real C++, double-checked locking like this is subtle — `instance = new Singleton()` isn't guaranteed atomic at the CPU/compiler level, so a thread could theoretically see a non-null pointer to a _partially constructed_ object without proper memory ordering (`std::atomic` with acquire/release semantics, or C++11's guaranteed-thread-safe static locals). Fine to present this version in an interview as "the standard textbook double-checked locking," but worth knowing this asterisk exists if someone probes deeper.
+
+#### 4.3.4 Eager initialization Singleton
+
+```cpp
+class Singleton {
+private:
+    static Singleton* instance;
+    Singleton() { cout << "Singleton Constructor Called!" << endl; }
+public:
+    static Singleton* getInstance() {
+        return instance; // nothing to check — already exists
+    }
+};
+Singleton* Singleton::instance = new Singleton(); // created at program startup, before main() runs
+```
+
+No locking, no null-check, no race condition possible — because the object is constructed _before_ any thread could ever call `getInstance()`. **The trade-off:** you pay the construction cost unconditionally at startup, even if the program never ends up calling `getInstance()` at all. Fine for cheap objects; wasteful if construction is expensive (e.g. opening a real DB connection) and the object might not always be needed.
+
+#### Comparing all four variants
+
+| Variant                | Thread-safe?                                     | When object is built       | Per-call overhead after first use |
+| ---------------------- | ------------------------------------------------ | -------------------------- | --------------------------------- |
+| Simple (lazy)          | No — race condition possible                     | First `getInstance()` call | None                              |
+| Mutex-locked           | Yes                                              | First `getInstance()` call | Lock every call (wasteful)        |
+| Double-checked locking | Yes (with the atomic/memory-order caveat above)  | First `getInstance()` call | None after first call             |
+| Eager                  | Yes (trivially — built before any threads exist) | Program startup            | None                              |
+
+**Interview signal:** if asked to implement Singleton, default to double-checked locking and _say out loud_ why the second null-check exists — that's usually the actual thing being tested, not just "can you write `getInstance()`." If asked "is this thread-safe" about the simple version, you should immediately be able to describe the exact race (two threads both passing the null-check before either finishes constructing).
+
+#### Real-world examples
+
+- **Logging** — a single shared `Logger` avoids two independent instances writing to the same file/stream and corrupting output.
+- **Database connection pool** — one `ConnectionManager` avoids exhausting the DB's connection limit by opening pools redundantly.
+- **Configuration manager** — app-wide settings should be read from one consistent source, not multiple copies that could drift out of sync.
+
+_(Note: Java classes are not Singleton "by default" — a plain Java class behaves exactly like C++ unless you deliberately apply this same private-constructor + static-instance pattern, or use an `enum` singleton, which Java does support as a language-level idiom.)_
+
+**Where this fits with what you already know:** unlike Strategy/Factory, Singleton isn't really about _variation_ — it's a **constraint** (exactly one instance) rather than a flexibility mechanism. Worth noticing it's also the pattern most often criticized in real system design for introducing hidden global state and making unit testing harder (a Singleton logger is awkward to mock) — good to mention this trade-off if it comes up, since blindly reaching for Singleton everywhere is itself considered a code smell in senior-level discussions.
 
 ---
 
