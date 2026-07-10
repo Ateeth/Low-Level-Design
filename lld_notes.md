@@ -56,6 +56,12 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [Push vs. Pull — worth noticing in this exact code](#push-vs-pull--worth-noticing-in-this-exact-code)
       - [Real-world examples](#real-world-examples-1)
       - [Ties to what you already know](#ties-to-what-you-already-know)
+    - [4.5 Decorator Pattern](#45-decorator-pattern)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first-4)
+      - [The fix — Decorator](#the-fix--decorator)
+      - [The key trick worth sitting with: is-a AND has-a, together](#the-key-trick-worth-sitting-with-is-a-and-has-a-together)
+      - [Real-world examples](#real-world-examples-2)
+      - [Ties to what you already know](#ties-to-what-you-already-know-1)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
     - [Problem 2: Zomato — Food Delivery App](#problem-2-zomato--food-delivery-app)
@@ -2042,6 +2048,206 @@ Neither is "more correct" — pull suits cases where different observers want di
 
 ---
 
+### 4.5 Decorator Pattern
+
+**Definition:** Attaches additional responsibilities to an object dynamically, at runtime, by wrapping it in one or more "decorator" objects that share the same interface as the object they wrap. The client interacts with the wrapped object exactly as it would the original — no type-checking, no special calling convention.
+
+#### Why this pattern exists — the bad design first
+
+Say you're modeling a Mario character that can pick up power-ups: HeightUp, Gun, Star — independently, in any combination, in any order.
+
+**Bad approach #1 — a subclass per combination:**
+
+```mermaid
+classDiagram
+    Character <|-- Mario
+    Character <|-- MarioWithHeightUp
+    Character <|-- MarioWithGun
+    Character <|-- MarioWithHeightUpAndGun
+    Character <|-- MarioWithStarAndGunAndHeightUp
+```
+
+This is the _exact same_ combinatorial explosion from the Strategy notes — 3 independent power-ups already need up to 2³ combinations, and it gets worse if power-ups can stack (two Gun pickups?) or a 4th power-up shows up.
+
+**Bad approach #2 — boolean flags inside `Mario`:**
+
+```cpp
+class Mario {
+    bool hasHeightUp, hasGun, hasStar;
+public:
+    string getAbilities() {
+        string result = "Mario";
+        if (hasHeightUp) result += " with HeightUp";
+        if (hasGun) result += " with Gun";
+        if (hasStar) result += " with Star Power";
+        return result;
+    }
+    // New power-up? Add a flag AND edit getAbilities() again — OCP violated.
+};
+```
+
+Same root problem as always: behavior that varies (and _stacks_) is welded directly into one class instead of being composed in.
+
+#### The fix — Decorator
+
+The core move: give the base object and every "wrapper" the **same interface**, and let each decorator hold a reference to _another object of that same interface_ — which might be the original object, or might be another decorator already wrapping it. Stacking power-ups becomes wrapping one decorator around another, any number of times, in any order, entirely at runtime.
+
+**Key components (matches the whiteboard's standard UML exactly):**
+
+- **`IComponent`** (here, `Character`) — the shared abstract interface every layer implements
+- **`ConcreteComponent`** (here, `Mario`) — the plain, undecorated base object
+- **`Decorator`** (here, `CharacterDecorator`) — abstract; both **is-a** `Character` (implements the same interface) and **has-a** `Character` (holds a reference to the object it wraps) — this dual relationship is the entire trick of the pattern
+- **`ConcreteDecoratorA/B`** (here, `HeightUp`, `GunPowerUp`, `StarPowerUp`) — each adds its own bit of behavior, then delegates to the wrapped object for everything else
+
+```mermaid
+classDiagram
+    IComponent <|-- ConcreteComponent
+    IComponent <|-- Decorator
+    Decorator o-- IComponent : has-a
+    Decorator <|-- ConcreteDecoratorA
+    Decorator <|-- ConcreteDecoratorB
+
+    class IComponent {
+        <<abstract>>
+        +methodA()
+        +methodB()
+    }
+    class ConcreteComponent {
+        +methodA()
+        +methodB()
+    }
+    class Decorator {
+        <<abstract>>
+        #component: IComponent
+    }
+    class ConcreteDecoratorA {
+        +methodA()
+        +methodB()
+    }
+    class ConcreteDecoratorB {
+        +methodA()
+        +methodB()
+    }
+```
+
+Mapped onto Mario:
+
+```mermaid
+classDiagram
+    Character <|-- Mario
+    Character <|-- CharacterDecorator
+    CharacterDecorator o-- Character : has-a
+    CharacterDecorator <|-- HeightUp
+    CharacterDecorator <|-- GunPowerUp
+    CharacterDecorator <|-- StarPowerUp
+
+    class Character {
+        <<abstract>>
+        +getAbilities() string
+    }
+    class Mario {
+        +getAbilities() string
+    }
+    class CharacterDecorator {
+        <<abstract>>
+        #character: Character
+    }
+    class HeightUp {
+        +getAbilities() string
+    }
+    class GunPowerUp {
+        +getAbilities() string
+    }
+    class StarPowerUp {
+        +getAbilities() string
+    }
+```
+
+```cpp
+class Character {
+public:
+    virtual string getAbilities() const = 0;
+    virtual ~Character() {}
+};
+
+class Mario : public Character {
+public:
+    string getAbilities() const override { return "Mario"; }
+};
+
+// Decorator "is-a" Character AND "has-a" Character — the dual relationship
+class CharacterDecorator : public Character {
+protected:
+    Character* character;
+public:
+    CharacterDecorator(Character* c) { character = c; }
+};
+
+class HeightUp : public CharacterDecorator {
+public:
+    HeightUp(Character* c) : CharacterDecorator(c) {}
+    string getAbilities() const override {
+        return character->getAbilities() + " with HeightUp";   // delegate, then add
+    }
+};
+
+class GunPowerUp : public CharacterDecorator {
+public:
+    GunPowerUp(Character* c) : CharacterDecorator(c) {}
+    string getAbilities() const override {
+        return character->getAbilities() + " with Gun";
+    }
+};
+
+class StarPowerUp : public CharacterDecorator {
+public:
+    StarPowerUp(Character* c) : CharacterDecorator(c) {}
+    string getAbilities() const override {
+        return character->getAbilities() + " with Star Power (Limited Time)";
+    }
+    ~StarPowerUp() { cout << "Destroying StarPowerUp Decorator" << endl; }
+};
+
+int main() {
+    Character* mario = new Mario();
+    cout << mario->getAbilities() << endl;              // "Mario"
+
+    mario = new HeightUp(mario);
+    cout << mario->getAbilities() << endl;              // "Mario with HeightUp"
+
+    mario = new GunPowerUp(mario);
+    cout << mario->getAbilities() << endl;              // "Mario with HeightUp with Gun"
+
+    mario = new StarPowerUp(mario);
+    cout << mario->getAbilities() << endl;              // "Mario with HeightUp with Gun with Star Power (Limited Time)"
+
+    delete mario;
+}
+```
+
+**Why this actually fixes both bad approaches:** no combination ever needs its own class — `GunPowerUp` wrapping `HeightUp` wrapping `Mario` is assembled at runtime from 3 small classes, not one hardcoded `MarioWithHeightUpAndGun` class. Adding a 4th power-up (`InvincibilityPowerUp`) is one new class implementing `CharacterDecorator` — zero edits to `Mario`, `HeightUp`, `GunPowerUp`, or `StarPowerUp` — pure OCP.
+
+#### The key trick worth sitting with: is-a AND has-a, together
+
+Every other pattern so far picked _one_ relationship: Strategy is has-a (composition only), classic inheritance hierarchies are is-a only. Decorator is deliberately **both at once** — `CharacterDecorator` extends `Character` (is-a, so it can be passed anywhere a `Character` is expected, including into _another_ decorator's constructor) **and** holds a `Character*` (has-a, so it can wrap and delegate to whatever's inside it). That dual nature is exactly what lets decorators stack on top of each other arbitrarily — each one is simultaneously a valid `Character` to wrap, and a wrapper capable of wrapping the next one.
+
+#### Real-world examples
+
+- **Java I/O streams** — `BufferedReader(FileReader(...))` is Decorator in the standard library: each layer wraps the previous, adding one capability (buffering, and lower down, reading).
+- **UI component libraries** — a `ScrollableComponent` or `BorderedComponent` wrapping a plain `Component`, stacking visual behaviors without subclassing every combination.
+- **Coffee shop example (classic textbook version)** — `Espresso` wrapped in `MilkDecorator`, wrapped in `CaramelDecorator` — same shape, different domain.
+
+#### Ties to what you already know
+
+- **Same dual is-a/has-a distinction from Part 2's UML associations**, just combined in one class instead of separated.
+- **DIP** — `CharacterDecorator` depends on `Character*` (the abstraction), never on `Mario` or another concrete decorator by name.
+- **LSP** — every decorator genuinely implements `getAbilities()` and can honestly stand in wherever a `Character` is expected; nothing throws "not supported."
+- **Compared to Strategy:** Strategy swaps _one_ behavior wholesale (pick exactly one `PaymentStrategy`); Decorator _stacks_ multiple behaviors additively, in any combination and order. Both solve "avoid subclass explosion," but Strategy picks one variant, Decorator layers many.
+
+**Interview signal:** if a design needs to add responsibilities that **stack** — any subset, any order, at runtime — and a subclass-per-combination or boolean-flags approach is starting to explode, that's Decorator. The tell in your own head should be: "this needs behavior layered on top of behavior," not "this needs to pick one of several behaviors" (that's Strategy) and not "this needs to decide which object to build in the first place" (that's Factory).
+
+---
+
 ## LLD Problems — Solved
 
 This section is independent of the "Part N" theory tracks above — it just grows by one problem every time you finish one, regardless of which theory part you're currently on.
@@ -2426,13 +2632,13 @@ classDiagram
 #### Relations used (mapped to Part 2 vocabulary)
 
 | Relation                     | Between                                                         | Why this one                                                                             |
-| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
 | Composition (filled diamond) | `User *-- Cart`                                                 | `Cart` has no meaning outside its `User`; created/destroyed with it                      |
 | Composition (filled diamond) | `Order *-- PaymentStrategy`                                     | `Order` owns and deletes its strategy in its own destructor                              |
 | Composition, by-value        | `Cart`/`Restaurant`/`Order` \*-- `MenuItem`                     | Each container stores its own copies (`vector<MenuItem>`), not shared pointers           |
 | Aggregation (hollow diamond) | `RestaurantManager o-- Restaurant`, `OrderManager o-- Order`    | Managers hold collections but don't fundamentally own the objects' conceptual existence  |
-| Inheritance                  | `Order <|-- DeliveryOrder/PickupOrder`                          | Genuine is-a — both honestly implement everything `Order` promises |
-| Inheritance                  | `PaymentStrategy <|-- CreditCard/Upi`, `OrderFactory <|-- Now/Scheduled` | Same — Strategy and Factory Method hierarchies |
+| Inheritance                  | `Order <                                                        | -- DeliveryOrder/PickupOrder`                                                            | Genuine is-a — both honestly implement everything `Order` promises |
+| Inheritance                  | `PaymentStrategy <                                              | -- CreditCard/Upi`, `OrderFactory <                                                      | -- Now/Scheduled`                                                  | Same — Strategy and Factory Method hierarchies |
 | Association (plain arrow)    | `Cart --> Restaurant`, `Order --> User`, `Order --> Restaurant` | Weak reference, non-owning — `Order` doesn't control `User`'s or `Restaurant`'s lifetime |
 | Dependency/creates           | `OrderFactory --> Order`, `TomatoApp --> ...`                   | One class uses/creates another without owning it structurally                            |
 
