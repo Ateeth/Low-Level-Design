@@ -2283,7 +2283,7 @@ public:
         return result;
     }
 };
-RestaurantManager* RestaurantManager::instance = nullptr;
+inline RestaurantManager* RestaurantManager::instance = nullptr;
 #endif // RESTAURANT_MANAGER_H
 ```
 
