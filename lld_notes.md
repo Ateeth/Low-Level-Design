@@ -49,6 +49,13 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [4.3.4 Eager initialization Singleton](#434-eager-initialization-singleton)
       - [Comparing all four variants](#comparing-all-four-variants)
       - [Real-world examples](#real-world-examples)
+    - [4.4 Observer Pattern](#44-observer-pattern)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first-3)
+      - [The fix — Observer](#the-fix--observer)
+      - [SRP gap in this implementation — worth noticing](#srp-gap-in-this-implementation--worth-noticing)
+      - [Push vs. Pull — worth noticing in this exact code](#push-vs-pull--worth-noticing-in-this-exact-code)
+      - [Real-world examples](#real-world-examples-1)
+      - [Ties to what you already know](#ties-to-what-you-already-know)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
     - [Problem 2: Zomato — Food Delivery App](#problem-2-zomato--food-delivery-app)
@@ -1786,6 +1793,252 @@ No locking, no null-check, no race condition possible — because the object is 
 _(Note: Java classes are not Singleton "by default" — a plain Java class behaves exactly like C++ unless you deliberately apply this same private-constructor + static-instance pattern, or use an `enum` singleton, which Java does support as a language-level idiom.)_
 
 **Where this fits with what you already know:** unlike Strategy/Factory, Singleton isn't really about _variation_ — it's a **constraint** (exactly one instance) rather than a flexibility mechanism. Worth noticing it's also the pattern most often criticized in real system design for introducing hidden global state and making unit testing harder (a Singleton logger is awkward to mock) — good to mention this trade-off if it comes up, since blindly reaching for Singleton everywhere is itself considered a code smell in senior-level discussions.
+
+---
+
+### 4.4 Observer Pattern
+
+**Definition:** Defines a one-to-many dependency between objects, so that when one object (the _Subject_/_Observable_) changes state, all its dependents (_Observers_) are notified automatically — without the Subject needing to know any concrete detail about who's listening or how many there are.
+
+**Where this sits relative to what you know:** this pattern addresses the common gap where making `NotificationService` abstract (SMS/Email subclasses) still gives you only _one_ polymorphic channel per order. Observer is what lets _multiple_ channels react to the same event simultaneously, without the publisher looping over them itself.
+
+#### Why this pattern exists — the bad design first
+
+```cpp
+// Bad: Channel hardcodes exactly which subscribers exist and calls each by name
+class Channel {
+    string name, latestVideo;
+public:
+    void uploadVideo(const string& title) {
+        latestVideo = title;
+        // Channel has to know about every subscriber type, by name, forever
+        varunSubscriber->notifyVarun(latestVideo);
+        tarunSubscriber->notifyTarun(latestVideo);
+        // New subscriber signs up? Edit this method again.
+        // Someone unsubscribes? Edit this method again.
+    }
+};
+```
+
+Two problems stack up immediately: **OCP violated** — every new subscriber means editing `uploadVideo()` again; and **the subscriber count is fixed at compile time** — there's no way to add or remove a subscriber while the program runs, which defeats the entire point of a subscription system.
+
+#### The fix — Observer
+
+The core move: give subscribers a common interface (`ISubscriber`) with one method (`update()`), and have the `Channel` hold a _collection_ of that interface type rather than named references to concrete subscribers. Subscribing/unsubscribing becomes adding/removing from that collection — no code changes needed either way.
+
+**Key components:**
+
+- **`ISubscriber`** (Observer interface) — declares `update()`, the one thing every observer must be able to receive
+- **`IChannel`** (Subject/Observable interface) — declares `subscribe()`, `unsubscribe()`, `notifySubscribers()`
+- **`Channel`** (Concrete Subject) — holds `vector<ISubscriber*>`, loops over it in `notifySubscribers()`, never knows concrete subscriber types
+- **`Subscriber`** (Concrete Observer) — implements `update()`, pulls whatever data it needs back from the `Channel` it's watching
+
+```mermaid
+classDiagram
+    IChannel <|-- Channel
+    ISubscriber <|-- Subscriber
+    Channel o-- ISubscriber : notifies
+    Subscriber --> Channel : pulls data from
+
+    class IChannel {
+        <<abstract>>
+        +subscribe(sub)
+        +unsubscribe(sub)
+        +notifySubscribers()
+    }
+    class ISubscriber {
+        <<abstract>>
+        +update()
+    }
+    class Channel {
+        -subscribers: vector~ISubscriber*~
+        -name: string
+        -latestVideo: string
+        +uploadVideo(title)
+        +getVideoData() string
+    }
+    class Subscriber {
+        -name: string
+        -channel: Channel*
+        +update()
+    }
+```
+
+```cpp
+class ISubscriber {
+public:
+    virtual void update() = 0;
+    virtual ~ISubscriber() {}
+};
+
+class IChannel {
+public:
+    virtual void subscribe(ISubscriber* subscriber) = 0;
+    virtual void unsubscribe(ISubscriber* subscriber) = 0;
+    virtual void notifySubscribers() = 0;
+    virtual ~IChannel() {}
+};
+
+class Channel : public IChannel {
+private:
+    vector<ISubscriber*> subscribers;
+    string name;
+    string latestVideo;
+public:
+    Channel(const string& name) : name(name) {}
+
+    void subscribe(ISubscriber* subscriber) override {
+        if (find(subscribers.begin(), subscribers.end(), subscriber) == subscribers.end())
+            subscribers.push_back(subscriber);
+    }
+    void unsubscribe(ISubscriber* subscriber) override {
+        auto it = find(subscribers.begin(), subscribers.end(), subscriber);
+        if (it != subscribers.end()) subscribers.erase(it);
+    }
+    void notifySubscribers() override {
+        for (ISubscriber* sub : subscribers) sub->update();   // doesn't know or care what type each one is
+    }
+    void uploadVideo(const string& title) {
+        latestVideo = title;
+        cout << "\n[" << name << " uploaded \"" << title << "\"]\n";
+        notifySubscribers();
+    }
+    string getVideoData() { return "\nCheckout our new Video : " + latestVideo + "\n"; }
+};
+
+class Subscriber : public ISubscriber {
+private:
+    string name;
+    Channel* channel;
+public:
+    Subscriber(const string& name, Channel* channel) : name(name), channel(channel) {}
+    void update() override {
+        cout << "Hey " << name << "," << channel->getVideoData();
+    }
+};
+
+int main() {
+    Channel* channel = new Channel("CoderArmy");
+    Subscriber* subs1 = new Subscriber("Varun", channel);
+    Subscriber* subs2 = new Subscriber("Tarun", channel);
+
+    channel->subscribe(subs1);
+    channel->subscribe(subs2);
+    channel->uploadVideo("Observer Pattern Tutorial");   // both notified
+
+    channel->unsubscribe(subs1);
+    channel->uploadVideo("Decorator Pattern Tutorial");  // only Tarun notified
+}
+```
+
+**Why this actually fixes the bad design:** `Channel::uploadVideo()` never changes regardless of how many subscribers exist or what concrete type they are — `notifySubscribers()` just iterates whatever's currently in the vector. Adding subscriber #100 is a runtime `subscribe()` call, not a code edit. This is what "one-to-many, decided at runtime" actually means in practice.
+
+#### SRP gap in this implementation — worth noticing
+
+Look again at `Channel`: it implements `subscribe()`/`unsubscribe()`/`notifySubscribers()` (the generic, reusable "manage a subscriber list" mechanics) **and** `uploadVideo()`/`getVideoData()` (channel-specific business logic) in the same class. Those are two different reasons to change — the subscription bookkeeping almost never changes across different kinds of Subjects, while the business logic (what "uploading a video" even means) is entirely specific to a YouTube-style channel. That's the same SRP smell from `ShoppingCart` back in Part 3: one class holding logic that belongs to two different concerns.
+
+**A cleaner split — pull the generic subscription mechanics into a reusable base:**
+
+```mermaid
+classDiagram
+    IChannel <|-- Observable
+    Observable <|-- Channel
+    ISubscriber <|-- Subscriber
+    Channel o-- ISubscriber : notifies
+    Subscriber --> Channel : pulls data from
+
+    class IChannel {
+        <<abstract>>
+        +subscribe(sub)
+        +unsubscribe(sub)
+        +notifySubscribers()
+    }
+    class Observable {
+        #subscribers: vector~ISubscriber*~
+        +subscribe(sub)
+        +unsubscribe(sub)
+        +notifySubscribers()
+    }
+    class Channel {
+        -name: string
+        -latestVideo: string
+        +uploadVideo(title)
+        +getVideoData() string
+    }
+    class ISubscriber {
+        <<abstract>>
+        +update()
+    }
+```
+
+```cpp
+// Observable implements the subscription mechanics ONCE — this code basically never
+// needs to change no matter what kind of Subject inherits from it
+class Observable : public IChannel {
+protected:
+    vector<ISubscriber*> subscribers;
+public:
+    void subscribe(ISubscriber* subscriber) override {
+        if (find(subscribers.begin(), subscribers.end(), subscriber) == subscribers.end())
+            subscribers.push_back(subscriber);
+    }
+    void unsubscribe(ISubscriber* subscriber) override {
+        auto it = find(subscribers.begin(), subscribers.end(), subscriber);
+        if (it != subscribers.end()) subscribers.erase(it);
+    }
+    void notifySubscribers() override {
+        for (ISubscriber* sub : subscribers) sub->update();
+    }
+};
+
+// Channel now ONLY holds channel-specific business logic — SRP restored
+class Channel : public Observable {
+private:
+    string name;
+    string latestVideo;
+public:
+    Channel(const string& name) : name(name) {}
+    void uploadVideo(const string& title) {
+        latestVideo = title;
+        cout << "\n[" << name << " uploaded \"" << title << "\"]\n";
+        notifySubscribers();   // inherited, not reimplemented
+    }
+    string getVideoData() { return "\nCheckout our new Video : " + latestVideo + "\n"; }
+};
+```
+
+**Why this is a genuine improvement, not just extra layers:** if you later build a second Subject in the same system — say a `StockPrice` that also needs subscribers — it inherits `subscribe()`/`unsubscribe()`/`notifySubscribers()` from `Observable` for free, with zero duplicated bookkeeping code. Without this split, every new Subject would reimplement (and could subtly re-break) the same subscriber-list logic from scratch. This is the same "extract the part that's reusable and stable, away from the part that's specific and changes" instinct as `DocumentRenderer` being pulled out of `DocumentEditor`, or `Persistence` being pulled out of business logic — SRP applied one level deeper than just "does the class do two unrelated things," down to "does this class mix reusable infrastructure with one-off business rules."
+
+**Interview signal:** if you're implementing Observer and notice your Subject class is _also_ the thing that does domain-specific work (uploading videos, updating stock prices, whatever), ask whether the subscribe/unsubscribe/notify mechanics could live in a shared `Observable` base — that's usually a free SRP win with no real downside, since that plumbing code is close to universal across every Subject you'll ever write.
+
+#### Push vs. Pull — worth noticing in this exact code
+
+This implementation uses the **pull model**: `update()` takes no arguments, and each `Subscriber` reaches back into `channel->getVideoData()` to get what it needs. The alternative is the **push model**, where `Channel` would call `sub->update(latestVideo)` directly, handing the data over instead of making the subscriber ask for it.
+
+|                      | Pull (this code)                                                                   | Push                                                |
+| -------------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `update()` signature | no args (or minimal)                                                               | carries the changed data                            |
+| Subscriber gets      | whatever it explicitly asks the Subject for                                        | exactly what the Subject decided to send            |
+| Coupling             | Subscriber needs a reference back to the Subject                                   | Subject decides what's relevant, less reaching back |
+| Downside             | Subscriber ends up depending on more of the Subject's interface (`getVideoData()`) | Subject must guess what every observer type needs   |
+
+Neither is "more correct" — pull suits cases where different observers want different subsets of state; push suits cases where there's one obvious payload every observer needs identically.
+
+#### Real-world examples
+
+- **YouTube subscriptions** (this exact example) — channel uploads, all subscribers notified.
+- **Event listeners in UI frameworks** — a button is the Subject, click-handlers are Observers.
+- **Stock price tickers** — a `Stock` object notifies all registered `Display`/`Trader` observers on price change.
+- **Pub-sub messaging systems** (Kafka, RabbitMQ at a conceptual level) — Observer is the design-pattern-level ancestor of these, though real message brokers add persistence, ordering guarantees, and decoupling the publisher and subscriber processes entirely.
+
+#### Ties to what you already know
+
+- **`IChannel`/`ISubscriber`** are both single-method interfaces — ISP, same as `PaymentStrategy`.
+- **`Channel` depends on `ISubscriber*`**, never a concrete `Subscriber` — DIP.
+- **Adding a new subscriber type** (e.g. an `EmailNotifiedSubscriber` with different `update()` behavior) is a new class implementing `ISubscriber` — zero edits to `Channel` — OCP.
+- **Composition, not inheritance:** `Channel` _has a_ collection of `ISubscriber`s — same has-a relationship reasoning as Strategy's `Client o-- Strategy`. In fact, structurally, Observer and Strategy are nearly identical UML shapes (`Subject/Client` holds a collection/reference to an interface, concrete implementations plug in) — the difference is intent: Strategy swaps _one_ interchangeable behavior; Observer notifies _many_ independent listeners of the same event.
+
+**Interview signal:** if a class needs to say "and tell everyone who cares that this happened" — especially when "everyone who cares" is an open-ended, runtime-determined set — that's Observer. If you catch a design maintaining parallel lists of "if X happened, call Y, Z, W" by name, that's the bad-design smell this pattern exists to fix. This is also exactly the gap flagged in Zomato: `NotificationService` today is a single call; a genuine Observer refactor would let `Order` notify an arbitrary set of subscribed channels (SMS, Email, push, analytics logging) without `TomatoApp` knowing any of them by name.
 
 ---
 
