@@ -51,6 +51,17 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [Real-world examples](#real-world-examples)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
+    - [Problem 2: Zomato — Food Delivery App](#problem-2-zomato--food-delivery-app)
+      - [Detailed class diagram](#detailed-class-diagram)
+      - [What each class does](#what-each-class-does)
+      - [How SOLID is maintained](#how-solid-is-maintained)
+      - [Relations used (mapped to Part 2 vocabulary)](#relations-used-mapped-to-part-2-vocabulary)
+      - [Full code](#full-code)
+      - [Further improvements](#further-improvements)
+        - [Improvement 1 — Payment Factory](#improvement-1--payment-factory)
+        - [Improvement 2 — NotificationService made abstract, with concrete SMS/Email](#improvement-2--notificationservice-made-abstract-with-concrete-smsemail)
+        - [Improvement 3 — Layered orchestration (Controller / Service separation)](#improvement-3--layered-orchestration-controller--service-separation)
+      - [Remaining improvement points (not yet applied)](#remaining-improvement-points-not-yet-applied)
 
 ---
 
@@ -1974,3 +1985,1074 @@ int main() {
 **Optional further enhancement (not required as-is):** `DocumentEditor` here still knows about both `Document` _and_ `Persistence` — technically a mild Principle of Least Knowledge (Law of Demeter) stretch, since it's reaching slightly beyond just "add elements" into orchestrating render+save too. The video's suggested fix is to split `render()` into its own `DocumentRenderer` class and introduce a separate `Client` class that owns `Document`, `DocumentRenderer`, `Persistence`, and `DocumentEditor`, calling each in the right order — so `DocumentEditor` only ever touches `Document`.
 
 This is a legitimate improvement, but treat it as optional, not mandatory: it trades one extra coordination-only class for slightly looser coupling. In an interview, the v2 solution above is already solid enough to defend on its own — mentioning this as a "here's a further refinement I'd ccd ..onsider, with this trade-off" is a good verbal addition if there's time, not something you need to build by default.
+
+### Problem 2: Zomato — Food Delivery App
+
+**Requirements:** user can search restaurants by location; add items to cart; checkout by making payment; get notified when order is placed successfully.
+
+**Architecture at a glance:**
+
+```
+models/      → data (MenuItem, Restaurant, User, Cart, Order + DeliveryOrder/PickupOrder)
+managers/    → singletons owning collections (RestaurantManager, OrderManager)
+strategies/  → Strategy pattern (PaymentStrategy + CreditCard/UPI)
+factories/   → Factory Method pattern (OrderFactory + Now/Scheduled)
+services/    → NotificationService
+TomatoApp    → the orchestrator/facade — same role as the Client class from Document Editor
+```
+
+**Two independent variability axes, resolved with two different patterns:**
+
+- **"How"** the order is fulfilled (Delivery vs. Pickup) → handled by **inheritance** (`DeliveryOrder`/`PickupOrder` extend `Order`)
+- **"When"** the order happens (Now vs. Scheduled) → handled by **Factory Method** (`NowOrderFactory`/`ScheduledOrderFactory` decide which concrete `Order` to build and how to stamp its time)
+
+Keeping these as two separate, orthogonal decisions is exactly what avoids the "2xN subclass explosion" trap from the Strategy notes — you never need a `ScheduledPickupOrder` class; the factory picks the `Order` subclass, independent of which factory made it.
+
+#### Detailed class diagram
+
+```mermaid
+classDiagram
+    User *-- Cart
+    Cart --> Restaurant : association (currently selected)
+    Cart *-- MenuItem : stored by value
+    Restaurant *-- MenuItem : stored by value
+
+    Order --> User : association, non-owning
+    Order --> Restaurant : association, non-owning
+    Order *-- MenuItem : stored by value
+    Order *-- PaymentStrategy : owns + deletes
+    Order <|-- DeliveryOrder
+    Order <|-- PickupOrder
+
+    PaymentStrategy <|-- CreditCardPaymentStrategy
+    PaymentStrategy <|-- UpiPaymentStrategy
+
+    OrderFactory <|-- NowOrderFactory
+    OrderFactory <|-- ScheduledOrderFactory
+    OrderFactory --> Order : creates
+
+    RestaurantManager o-- Restaurant
+    OrderManager o-- Order
+
+    TomatoApp --> User
+    TomatoApp --> RestaurantManager
+    TomatoApp --> OrderManager
+    TomatoApp --> OrderFactory
+    TomatoApp --> NotificationService
+
+    class MenuItem {
+        -code: string
+        -name: string
+        -price: int
+        +getCode() string
+        +getName() string
+        +getPrice() int
+    }
+    class Restaurant {
+        -restaurantId: int
+        -name: string
+        -location: string
+        -menu: vector~MenuItem~
+        +addMenuItem(item)
+        +getMenu() vector~MenuItem~
+    }
+    class RestaurantManager {
+        <<Singleton>>
+        -instance: RestaurantManager$
+        -restaurants: vector~Restaurant~
+        -RestaurantManager()
+        +getInstance() RestaurantManager$
+        +addRestaurant(r)
+        +searchByLocation(loc) vector~Restaurant~
+    }
+    class Cart {
+        -restaurant: Restaurant
+        -items: vector~MenuItem~
+        +setRestaurant(r)
+        +getRestaurant() Restaurant
+        +addItem(item)
+        +getItems() vector~MenuItem~
+        +getTotalCost() double
+        +isEmpty() bool
+        +clear()
+    }
+    class User {
+        -userId: int
+        -name: string
+        -address: string
+        -cart: Cart
+        +getCart() Cart
+        +getName() string
+        +getAddress() string
+    }
+    class Order {
+        <<abstract>>
+        #orderId: int
+        #user: User
+        #restaurant: Restaurant
+        #items: vector~MenuItem~
+        #paymentStrategy: PaymentStrategy
+        #total: double
+        #scheduled: string
+        +processPayment() bool
+        +getType()* string
+        +setItems(items)
+        +setPaymentStrategy(p)
+    }
+    class DeliveryOrder {
+        -userAddress: string
+        +getType() string
+    }
+    class PickupOrder {
+        -restaurantAddress: string
+        +getType() string
+    }
+    class OrderManager {
+        <<Singleton>>
+        -instance: OrderManager$
+        -orders: vector~Order~
+        -OrderManager()
+        +getInstance() OrderManager$
+        +addOrder(order)
+        +listOrders()
+    }
+    class PaymentStrategy {
+        <<abstract>>
+        +pay(amount)*
+    }
+    class OrderFactory {
+        <<abstract>>
+        +createOrder(user, cart, restaurant, items, strategy, total, type)* Order
+    }
+    class NowOrderFactory {
+        +createOrder(...) Order
+    }
+    class ScheduledOrderFactory {
+        -scheduleTime: string
+        +createOrder(...) Order
+    }
+    class NotificationService {
+        +notify(order)$
+    }
+    class TomatoApp {
+        +searchRestaurants(location) vector~Restaurant~
+        +selectRestaurant(user, restaurant)
+        +addToCart(user, itemCode)
+        +checkoutNow(user, type, strategy) Order
+        +checkoutScheduled(user, type, strategy, time) Order
+        +payForOrder(user, order)
+    }
+```
+
+**Note on the composition diamonds here:** `MenuItem` is stored **by value** (`vector<MenuItem>`) in `Cart`, `Restaurant`, and `Order` — each container copies its own items rather than sharing pointers to one canonical `MenuItem`. Storing by value genuinely is composition in implementation terms (each copy's lifetime is fully tied to its container), even though conceptually "the same dish" exists in multiple places. This is the same by-value composition style as the `Order`/`OrderLineItem` example from Part 2 — worth being able to justify either a pointer-based aggregation or a value-based composition design, since the actual code decides which one you're doing, not just the domain concept.
+
+#### What each class does
+
+- **`MenuItem`** — pure data (code, name, price), no behavior.
+- **`Restaurant`** — owns its menu; `addMenuItem()` copies items in.
+- **`RestaurantManager`** (Singleton) — single collection of all restaurants; `searchByLocation()` does case-insensitive matching.
+- **`User`** — owns exactly one `Cart` for its lifetime (created in constructor, destroyed in destructor) — real composition, matching the code's own memory management.
+- **`Cart`** — tracks the currently selected `Restaurant` plus items added from it; computes total.
+- **`Order`** (abstract) — shared shape: id, user, restaurant, items, `PaymentStrategy`, total, scheduled time. `processPayment()` delegates to whichever strategy was set — Strategy pattern in action.
+- **`DeliveryOrder` / `PickupOrder`** — the "how" axis; each adds one extra field and implements `getType()`.
+- **`OrderFactory`** (abstract) — Factory Method: declares the full `createOrder(...)` signature.
+- **`NowOrderFactory` / `ScheduledOrderFactory`** — the "when" axis; each decides which `Order` subclass to build based on `orderType`, and stamps the time differently.
+- **`OrderManager`** (Singleton) — single collection of all placed orders.
+- **`PaymentStrategy` / `CreditCardPaymentStrategy` / `UpiPaymentStrategy`** — Strategy pattern; `Order` only ever holds a `PaymentStrategy*`.
+- **`NotificationService`** — static `notify(Order*)`, prints confirmation details.
+- **`TomatoApp`** — the orchestrator/facade (same role as `Client` in Document Editor). Owns no long-term business state; just sequences: search → select restaurant → add to cart → checkout via a factory → pay → notify.
+
+#### How SOLID is maintained
+
+| Principle | Where                                                                                                                                                                                                                                                              |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SRP       | Each class has one job: `Restaurant` only holds menu data, `RestaurantManager` only manages the collection, `Cart` only tracks selections, `OrderFactory` subclasses only decide _when_, `Order` subclasses only decide _how_, `NotificationService` only notifies |
+| OCP       | New payment method = new `PaymentStrategy` subclass; new fulfillment type = new `Order` subclass; new timing mode = new `OrderFactory` subclass — zero edits to existing classes in each case                                                                      |
+| LSP       | Every `PaymentStrategy` genuinely implements `pay()`, every `Order` subclass genuinely implements `getType()`, every `OrderFactory` genuinely implements `createOrder()` — no `logic_error("not supported")` anywhere                                              |
+| ISP       | `PaymentStrategy` has exactly one method, `OrderFactory` has exactly one method — no class forced to implement something irrelevant                                                                                                                                |
+| DIP       | `Order` depends on `PaymentStrategy*` not a concrete strategy; `TomatoApp` depends on `OrderFactory*` not a concrete factory — high-level orchestration never touches concrete low-level classes directly                                                          |
+
+#### Relations used (mapped to Part 2 vocabulary)
+
+| Relation                     | Between                                                         | Why this one                                                                             |
+| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| Composition (filled diamond) | `User *-- Cart`                                                 | `Cart` has no meaning outside its `User`; created/destroyed with it                      |
+| Composition (filled diamond) | `Order *-- PaymentStrategy`                                     | `Order` owns and deletes its strategy in its own destructor                              |
+| Composition, by-value        | `Cart`/`Restaurant`/`Order` \*-- `MenuItem`                     | Each container stores its own copies (`vector<MenuItem>`), not shared pointers           |
+| Aggregation (hollow diamond) | `RestaurantManager o-- Restaurant`, `OrderManager o-- Order`    | Managers hold collections but don't fundamentally own the objects' conceptual existence  |
+| Inheritance                  | `Order <                                                        | -- DeliveryOrder/PickupOrder`                                                            | Genuine is-a — both honestly implement everything `Order` promises |
+| Inheritance                  | `PaymentStrategy <                                              | -- CreditCard/Upi`, `OrderFactory <                                                      | -- Now/Scheduled`                                                  | Same — Strategy and Factory Method hierarchies |
+| Association (plain arrow)    | `Cart --> Restaurant`, `Order --> User`, `Order --> Restaurant` | Weak reference, non-owning — `Order` doesn't control `User`'s or `Restaurant`'s lifetime |
+| Dependency/creates           | `OrderFactory --> Order`, `TomatoApp --> ...`                   | One class uses/creates another without owning it structurally                            |
+
+#### Full code
+
+**`models/MenuItem.h`**
+
+```cpp
+#ifndef MENUITEM_H
+#define MENUITEM_H
+#include <string>
+using namespace std;
+class MenuItem {
+private:
+    string code;
+    string name;
+    int price;
+public:
+    MenuItem(const string& code, const string& name, int price) {
+        this->code = code;
+        this->name = name;
+        this->price = price;
+    }
+    string getCode() const { return code; }
+    void setCode(const string &c) { code = c; }
+    string getName() const { return name; }
+    void setName(const string &n) { name = n; }
+    int getPrice() const { return price; }
+    void setPrice(int p) { price = p; }
+};
+#endif // MENUITEM_H
+```
+
+**`models/Restaurant.h`**
+
+```cpp
+#ifndef RESTAURANT_H
+#define RESTAURANT_H
+#include <iostream>
+#include <string>
+#include <vector>
+#include "MenuItem.h"
+using namespace std;
+class Restaurant {
+private:
+    static int nextRestaurantId;
+    int restaurantId;
+    string name;
+    string location;
+    vector<MenuItem> menu;
+public:
+    Restaurant(const string& name, const string& location) {
+        this->name = name;
+        this->location = location;
+        this->restaurantId = ++nextRestaurantId;
+    }
+    ~Restaurant() {
+        cout << "Destroying Restaurant: " << name << ", and clearing its menu." << endl;
+        menu.clear();
+    }
+    string getName() const { return name; }
+    void setName(const string &n) { name = n; }
+    string getLocation() const { return location; }
+    void setLocation(const string &loc) { location = loc; }
+    void addMenuItem(const MenuItem &item) { menu.push_back(item); }
+    const vector<MenuItem>& getMenu() const { return menu; }
+};
+int Restaurant::nextRestaurantId = 0;
+#endif // RESTAURANT_H
+```
+
+**`managers/RestaurantManager.h`**
+
+```cpp
+#ifndef RESTAURANT_MANAGER_H
+#define RESTAURANT_MANAGER_H
+#include <vector>
+#include <string>
+#include <algorithm>
+#include "../models/Restaurant.h"
+using namespace std;
+class RestaurantManager {
+private:
+    vector<Restaurant*> restaurants;
+    static RestaurantManager* instance;
+    RestaurantManager() {} // private constructor
+public:
+    static RestaurantManager* getInstance() {
+        if (!instance) instance = new RestaurantManager();
+        return instance;
+    }
+    void addRestaurant(Restaurant* r) { restaurants.push_back(r); }
+    vector<Restaurant*> searchByLocation(string loc) {
+        vector<Restaurant*> result;
+        transform(loc.begin(), loc.end(), loc.begin(), ::tolower);
+        for (auto r : restaurants) {
+            string rl = r->getLocation();
+            transform(rl.begin(), rl.end(), rl.begin(), ::tolower);
+            if (rl == loc) result.push_back(r);
+        }
+        return result;
+    }
+};
+RestaurantManager* RestaurantManager::instance = nullptr;
+#endif // RESTAURANT_MANAGER_H
+```
+
+**`models/Cart.h`**
+
+```cpp
+#ifndef CART_H
+#define CART_H
+#include <vector>
+#include "MenuItem.h"
+#include "Restaurant.h"
+using namespace std;
+class Cart {
+private:
+    Restaurant* restaurant;
+    vector<MenuItem> items;
+public:
+    Cart() : restaurant(nullptr) {}
+    void setRestaurant(Restaurant* r) { restaurant = r; }
+    Restaurant* getRestaurant() const { return restaurant; }
+    void addItem(const MenuItem& item) { items.push_back(item); }
+    const vector<MenuItem>& getItems() const { return items; }
+    double getTotalCost() const {
+        double total = 0;
+        for (auto& i : items) total += i.getPrice();
+        return total;
+    }
+    bool isEmpty() const { return items.empty(); }
+    void clear() { items.clear(); restaurant = nullptr; }
+};
+#endif // CART_H
+```
+
+**`models/User.h`**
+
+```cpp
+#ifndef USER_H
+#define USER_H
+#include <string>
+#include "Cart.h"
+using namespace std;
+class User {
+private:
+    int userId;
+    string name;
+    string address;
+    Cart* cart;
+public:
+    User(int userId, const string& name, const string& address) {
+        this->userId = userId;
+        this->name = name;
+        this->address = address;
+        cart = new Cart();
+    }
+    ~User() { delete cart; }
+    string getName() const { return name; }
+    void setName(const string &n) { name = n; }
+    string getAddress() const { return address; }
+    void setAddress(const string &a) { address = a; }
+    Cart* getCart() const { return cart; }
+};
+#endif // USER_H
+```
+
+**`strategies/PaymentStrategy.h`**
+
+```cpp
+#ifndef PAYMENT_STRATEGY_H
+#define PAYMENT_STRATEGY_H
+#include <iostream>
+#include <string>
+using namespace std;
+class PaymentStrategy {
+public:
+    virtual void pay(double amount) = 0;
+    virtual ~PaymentStrategy() {}
+};
+#endif // PAYMENT_STRATEGY_H
+```
+
+**`strategies/CreditCardPaymentStrategy.h`**
+
+```cpp
+#ifndef CREDIT_CARD_PAYMENT_STRATEGY_H
+#define CREDIT_CARD_PAYMENT_STRATEGY_H
+#include "PaymentStrategy.h"
+#include <iostream>
+#include <string>
+using namespace std;
+class CreditCardPaymentStrategy : public PaymentStrategy {
+private:
+    string cardNumber;
+public:
+    CreditCardPaymentStrategy(const string& card) { cardNumber = card; }
+    void pay(double amount) override {
+        cout << "Paid Rs." << amount << " using Credit Card (" << cardNumber << ")" << endl;
+    }
+};
+#endif // CREDIT_CARD_PAYMENT_STRATEGY_H
+```
+
+**`strategies/UpiPaymentStrategy.h`**
+
+```cpp
+#ifndef UPI_PAYMENT_STRATEGY_H
+#define UPI_PAYMENT_STRATEGY_H
+#include "PaymentStrategy.h"
+#include <iostream>
+#include <string>
+using namespace std;
+class UpiPaymentStrategy : public PaymentStrategy {
+private:
+    string mobile;
+public:
+    UpiPaymentStrategy(const string& mob) { mobile = mob; }
+    void pay(double amount) override {
+        cout << "Paid Rs." << amount << " using UPI (" << mobile << ")" << endl;
+    }
+};
+#endif // UPI_PAYMENT_STRATEGY_H
+```
+
+**`models/Order.h`**
+
+```cpp
+#ifndef ORDER_H
+#define ORDER_H
+#include <iostream>
+#include <string>
+#include <vector>
+#include "User.h"
+#include "Restaurant.h"
+#include "MenuItem.h"
+#include "../strategies/PaymentStrategy.h"
+using namespace std;
+class Order {
+protected:
+    static int nextOrderId;
+    int orderId;
+    User* user;
+    Restaurant* restaurant;
+    vector<MenuItem> items;
+    PaymentStrategy* paymentStrategy;
+    double total;
+    string scheduled;
+public:
+    Order() {
+        user = nullptr;
+        restaurant = nullptr;
+        paymentStrategy = nullptr;
+        total = 0.0;
+        scheduled = "";
+        orderId = ++nextOrderId;
+    }
+    virtual ~Order() { delete paymentStrategy; }
+    bool processPayment() {
+        if (paymentStrategy) {
+            paymentStrategy->pay(total);
+            return true;
+        }
+        cout << "Please choose a payment mode first" << endl;
+        return false;
+    }
+    virtual string getType() const = 0;
+    int getOrderId() const { return orderId; }
+    void setUser(User* u) { user = u; }
+    User* getUser() const { return user; }
+    void setRestaurant(Restaurant* r) { restaurant = r; }
+    Restaurant* getRestaurant() const { return restaurant; }
+    void setItems(const vector<MenuItem>& its) {
+        items = its;
+        total = 0;
+        for (auto &i : items) total += i.getPrice();
+    }
+    const vector<MenuItem>& getItems() const { return items; }
+    void setPaymentStrategy(PaymentStrategy* p) { paymentStrategy = p; }
+    void setScheduled(const string& s) { scheduled = s; }
+    string getScheduled() const { return scheduled; }
+    double getTotal() const { return total; }
+    void setTotal(int total) { this->total = total; }
+};
+int Order::nextOrderId = 0;
+#endif // ORDER_H
+```
+
+**`models/DeliveryOrder.h`**
+
+```cpp
+#ifndef DELIVERY_ORDER_H
+#define DELIVERY_ORDER_H
+#include "Order.h"
+using namespace std;
+class DeliveryOrder : public Order {
+private:
+    string userAddress;
+public:
+    DeliveryOrder() { userAddress = ""; }
+    string getType() const override { return "Delivery"; }
+    void setUserAddress(const string& addr) { userAddress = addr; }
+    string getUserAddress() const { return userAddress; }
+};
+#endif // DELIVERY_ORDER_H
+```
+
+**`models/PickupOrder.h`**
+
+```cpp
+#ifndef PICKUP_ORDER_H
+#define PICKUP_ORDER_H
+#include "Order.h"
+using namespace std;
+class PickupOrder : public Order {
+private:
+    string restaurantAddress;
+public:
+    PickupOrder() { restaurantAddress = ""; }
+    string getType() const override { return "Pickup"; }
+    void setRestaurantAddress(const string& addr) { restaurantAddress = addr; }
+    string getRestaurantAddress() const { return restaurantAddress; }
+};
+#endif // PICKUP_ORDER_H
+```
+
+**`managers/OrderManager.h`**
+
+```cpp
+#ifndef ORDER_MANAGER_H
+#define ORDER_MANAGER_H
+#include <vector>
+#include <iostream>
+#include "../models/Order.h"
+using namespace std;
+class OrderManager {
+private:
+    vector<Order*> orders;
+    static OrderManager* instance;
+    OrderManager() {} // private constructor
+public:
+    static OrderManager* getInstance() {
+        if (!instance) instance = new OrderManager();
+        return instance;
+    }
+    void addOrder(Order* order) { orders.push_back(order); }
+    void listOrders() {
+        cout << "\n--- All Orders ---" << endl;
+        for (auto order : orders) {
+            cout << order->getType() << " order for " << order->getUser()->getName()
+                 << " | Total: Rs." << order->getTotal()
+                 << " | At: " << order->getScheduled() << endl;
+        }
+    }
+};
+OrderManager* OrderManager::instance = nullptr;
+#endif // ORDER_MANAGER_H
+```
+
+**`factories/OrderFactory.h`**
+
+```cpp
+#ifndef ORDER_FACTORY_H
+#define ORDER_FACTORY_H
+#include "../models/Order.h"
+#include "../models/Cart.h"
+#include "../models/Restaurant.h"
+#include "../strategies/PaymentStrategy.h"
+#include <vector>
+#include <string>
+using namespace std;
+class OrderFactory {
+public:
+    virtual Order* createOrder(User* user, Cart* cart, Restaurant* restaurant, const vector<MenuItem>& menuItems,
+                                PaymentStrategy* paymentStrategy, double totalCost, const string& orderType) = 0;
+    virtual ~OrderFactory() {}
+};
+#endif // ORDER_FACTORY_H
+```
+
+**`utils/TimeUtils.h`**
+
+```cpp
+#ifndef TIME_UTILS_H
+#define TIME_UTILS_H
+#include <ctime>
+#include <string>
+using namespace std;
+class TimeUtils {
+public:
+    static string getCurrentTime() {
+        time_t now = time(0);
+        char* dt = ctime(&now);
+        string s(dt);
+        if (!s.empty() && s.back() == '\n') s.pop_back();
+        return s;
+    }
+};
+#endif // TIME_UTILS_H
+```
+
+**`factories/NowOrderFactory.h`**
+
+```cpp
+#ifndef NOW_ORDER_FACTORY_H
+#define NOW_ORDER_FACTORY_H
+#include "OrderFactory.h"
+#include "../models/DeliveryOrder.h"
+#include "../models/PickupOrder.h"
+#include "../utils/TimeUtils.h"
+using namespace std;
+class NowOrderFactory : public OrderFactory {
+public:
+    Order* createOrder(User* user, Cart* cart, Restaurant* restaurant, const vector<MenuItem>& menuItems,
+                        PaymentStrategy* paymentStrategy, double totalCost, const string& orderType) override {
+        Order* order = nullptr;
+        if (orderType == "Delivery") {
+            auto deliveryOrder = new DeliveryOrder();
+            deliveryOrder->setUserAddress(user->getAddress());
+            order = deliveryOrder;
+        } else {
+            auto pickupOrder = new PickupOrder();
+            pickupOrder->setRestaurantAddress(restaurant->getLocation());
+            order = pickupOrder;
+        }
+        order->setUser(user);
+        order->setRestaurant(restaurant);
+        order->setItems(menuItems);
+        order->setPaymentStrategy(paymentStrategy);
+        order->setScheduled(TimeUtils::getCurrentTime());
+        order->setTotal(totalCost);
+        return order;
+    }
+};
+#endif // NOW_ORDER_FACTORY_H
+```
+
+**`factories/ScheduledOrderFactory.h`** — corrected, see note below the code
+
+```cpp
+#ifndef SCHEDULED_ORDER_FACTORY_H
+#define SCHEDULED_ORDER_FACTORY_H
+#include "OrderFactory.h"
+#include "../models/DeliveryOrder.h"
+#include "../models/PickupOrder.h"
+using namespace std;
+class ScheduledOrderFactory : public OrderFactory {
+private:
+    string scheduleTime;
+public:
+    ScheduledOrderFactory(string scheduleTime) : scheduleTime(scheduleTime) {}
+    Order* createOrder(User* user, Cart* cart, Restaurant* restaurant, const vector<MenuItem>& menuItems,
+                        PaymentStrategy* paymentStrategy, double totalCost, const string& orderType) override {
+        Order* order = nullptr;
+        if (orderType == "Delivery") {
+            auto deliveryOrder = new DeliveryOrder();
+            deliveryOrder->setUserAddress(user->getAddress());
+            order = deliveryOrder;
+        } else {
+            auto pickupOrder = new PickupOrder();
+            pickupOrder->setRestaurantAddress(restaurant->getLocation());
+            order = pickupOrder;   // FIX: original video code omitted this assignment,
+                                   // leaving `order` as nullptr and crashing on the
+                                   // next line (order->setUser(...)) for any pickup+scheduled order
+        }
+        order->setUser(user);
+        order->setRestaurant(restaurant);
+        order->setItems(menuItems);
+        order->setPaymentStrategy(paymentStrategy);
+        order->setScheduled(scheduleTime);
+        order->setTotal(totalCost);
+        return order;
+    }
+};
+#endif // SCHEDULED_ORDER_FACTORY_H
+```
+
+**`services/NotificationService.h`**
+
+```cpp
+#ifndef NOTIFICATION_SERVICE_H
+#define NOTIFICATION_SERVICE_H
+#include <iostream>
+#include "../models/Order.h"
+using namespace std;
+class NotificationService {
+public:
+    static void notify(Order* order) {
+        cout << "\nNotification: New " << order->getType() << " order placed!" << endl;
+        cout << "---------------------------------------------" << endl;
+        cout << "Order ID: " << order->getOrderId() << endl;
+        cout << "Customer: " << order->getUser()->getName() << endl;
+        cout << "Restaurant: " << order->getRestaurant()->getName() << endl;
+        cout << "Items Ordered:\n";
+        for (const auto& item : order->getItems()) {
+            cout << "   - " << item.getName() << " (Rs." << item.getPrice() << ")\n";
+        }
+        cout << "Total: Rs." << order->getTotal() << endl;
+        cout << "Scheduled For: " << order->getScheduled() << endl;
+        cout << "Payment: Done" << endl;
+        cout << "---------------------------------------------" << endl;
+    }
+};
+#endif // NOTIFICATION_SERVICE_H
+```
+
+**`TomatoApp.h`**
+
+```cpp
+#ifndef TOMATO_APP_H
+#define TOMATO_APP_H
+#include <vector>
+#include <string>
+#include "models/User.h"
+#include "models/Restaurant.h"
+#include "models/Cart.h"
+#include "managers/RestaurantManager.h"
+#include "managers/OrderManager.h"
+#include "strategies/PaymentStrategy.h"
+#include "strategies/UpiPaymentStrategy.h"
+#include "factories/NowOrderFactory.h"
+#include "factories/ScheduledOrderFactory.h"
+#include "services/NotificationService.h"
+using namespace std;
+class TomatoApp {
+public:
+    TomatoApp() { initializeRestaurants(); }
+
+    void initializeRestaurants() {
+        Restaurant* restaurant1 = new Restaurant("Bikaner", "Delhi");
+        restaurant1->addMenuItem(MenuItem("P1", "Chole Bhature", 120));
+        restaurant1->addMenuItem(MenuItem("P2", "Samosa", 15));
+
+        Restaurant* restaurant2 = new Restaurant("Haldiram", "Kolkata");
+        restaurant2->addMenuItem(MenuItem("P1", "Raj Kachori", 80));
+        restaurant2->addMenuItem(MenuItem("P2", "Pav Bhaji", 100));
+        restaurant2->addMenuItem(MenuItem("P3", "Dhokla", 50));
+
+        Restaurant* restaurant3 = new Restaurant("Saravana Bhavan", "Chennai");
+        restaurant3->addMenuItem(MenuItem("P1", "Masala Dosa", 90));
+        restaurant3->addMenuItem(MenuItem("P2", "Idli Vada", 60));
+        restaurant3->addMenuItem(MenuItem("P3", "Filter Coffee", 30));
+
+        RestaurantManager* restaurantManager = RestaurantManager::getInstance();
+        restaurantManager->addRestaurant(restaurant1);
+        restaurantManager->addRestaurant(restaurant2);
+        restaurantManager->addRestaurant(restaurant3);
+    }
+
+    vector<Restaurant*> searchRestaurants(const string& location) {
+        return RestaurantManager::getInstance()->searchByLocation(location);
+    }
+
+    void selectRestaurant(User* user, Restaurant* restaurant) {
+        user->getCart()->setRestaurant(restaurant);
+    }
+
+    void addToCart(User* user, const string& itemCode) {
+        Restaurant* restaurant = user->getCart()->getRestaurant();
+        if (!restaurant) {
+            cout << "Please select a restaurant first." << endl;
+            return;
+        }
+        for (const auto& item : restaurant->getMenu()) {
+            if (item.getCode() == itemCode) {
+                user->getCart()->addItem(item);
+                break;
+            }
+        }
+    }
+
+    Order* checkoutNow(User* user, const string& orderType, PaymentStrategy* paymentStrategy) {
+        return checkout(user, orderType, paymentStrategy, new NowOrderFactory());
+    }
+
+    Order* checkoutScheduled(User* user, const string& orderType, PaymentStrategy* paymentStrategy, const string& scheduleTime) {
+        return checkout(user, orderType, paymentStrategy, new ScheduledOrderFactory(scheduleTime));
+    }
+
+    Order* checkout(User* user, const string& orderType,
+                     PaymentStrategy* paymentStrategy, OrderFactory* orderFactory) {
+        if (user->getCart()->isEmpty()) return nullptr;
+
+        Cart* userCart = user->getCart();
+        Restaurant* orderedRestaurant = userCart->getRestaurant();
+        vector<MenuItem> itemsOrdered = userCart->getItems();
+        double totalCost = userCart->getTotalCost();
+
+        Order* order = orderFactory->createOrder(user, userCart, orderedRestaurant, itemsOrdered, paymentStrategy, totalCost, orderType);
+        OrderManager::getInstance()->addOrder(order);
+        return order;
+    }
+
+    void payForOrder(User* user, Order* order) {
+        bool isPaymentSuccess = order->processPayment();
+        if (isPaymentSuccess) {
+            NotificationService::notify(order);
+            user->getCart()->clear();
+        }
+    }
+
+    void printUserCart(User* user) {
+        cout << "Items in cart:" << endl;
+        cout << "------------------------------------" << endl;
+        for (const auto& item : user->getCart()->getItems()) {
+            cout << item.getCode() << " : " << item.getName() << " : Rs." << item.getPrice() << endl;
+        }
+        cout << "------------------------------------" << endl;
+        cout << "Grand total : Rs." << user->getCart()->getTotalCost() << endl;
+    }
+};
+#endif // TOMATO_APP_H
+```
+
+**`main.cpp`**
+
+```cpp
+#include <iostream>
+#include "TomatoApp.h"
+using namespace std;
+int main() {
+    TomatoApp* tomato = new TomatoApp();
+    User* user = new User(101, "Aditya", "Delhi");
+    cout << "User: " << user->getName() << " is active." << endl;
+
+    vector<Restaurant*> restaurantList = tomato->searchRestaurants("Delhi");
+    if (restaurantList.empty()) {
+        cout << "No restaurants found!" << endl;
+        return 0;
+    }
+    cout << "Found Restaurants:" << endl;
+    for (auto restaurant : restaurantList) cout << " - " << restaurant->getName() << endl;
+
+    tomato->selectRestaurant(user, restaurantList[0]);
+    cout << "Selected restaurant: " << restaurantList[0]->getName() << endl;
+
+    tomato->addToCart(user, "P1");
+    tomato->addToCart(user, "P2");
+    tomato->printUserCart(user);
+
+    Order* order = tomato->checkoutNow(user, "Delivery", new UpiPaymentStrategy("1234567890"));
+    tomato->payForOrder(user, order);
+
+    delete tomato;
+    delete user;
+    return 0;
+}
+```
+
+#### Further improvements
+
+Three refinements the video suggests on top of the base design above. Together these tighten OCP, SRP, and DIP further than the original.
+
+##### Improvement 1 — Payment Factory
+
+**Why:** `TomatoApp` currently does `new UpiPaymentStrategy("1234567890")` directly at the call site — the client knows about concrete payment classes. Adding a new payment method means editing every place that constructs one. Same fix as `OrderFactory`, applied to payments.
+
+```mermaid
+classDiagram
+    PaymentStrategy <|-- UpiPaymentStrategy
+    PaymentStrategy <|-- CreditCardPaymentStrategy
+    PaymentFactory --> PaymentStrategy : creates
+    class PaymentStrategy { <<abstract>> +pay(amount) }
+    class PaymentFactory { +createPaymentStrategy(type, detail) PaymentStrategy }
+```
+
+```cpp
+// factories/PaymentFactory.h
+#ifndef PAYMENT_FACTORY_H
+#define PAYMENT_FACTORY_H
+#include "../strategies/PaymentStrategy.h"
+#include "../strategies/UpiPaymentStrategy.h"
+#include "../strategies/CreditCardPaymentStrategy.h"
+#include <string>
+using namespace std;
+class PaymentFactory {
+public:
+    static PaymentStrategy* createPaymentStrategy(const string& type, const string& detail) {
+        if (type == "UPI") return new UpiPaymentStrategy(detail);
+        if (type == "CreditCard") return new CreditCardPaymentStrategy(detail);
+        return nullptr;
+    }
+};
+#endif // PAYMENT_FACTORY_H
+```
+
+```cpp
+// TomatoApp.h — call site changes from:
+Order* order = tomato->checkoutNow(user, "Delivery", new UpiPaymentStrategy("1234567890"));
+// to:
+PaymentStrategy* strategy = PaymentFactory::createPaymentStrategy("UPI", "1234567890");
+Order* order = tomato->checkoutNow(user, "Delivery", strategy);
+```
+
+**SOLID gained:** OCP — a new payment method (`NetBanking`) is a new `PaymentStrategy` subclass plus one line in `PaymentFactory`, zero edits to `TomatoApp`. **Relation used:** `PaymentFactory --> PaymentStrategy` is a dependency/creates association, same shape as `OrderFactory --> Order`.
+
+##### Improvement 2 — NotificationService made abstract, with concrete SMS/Email
+
+**Why:** the current `NotificationService::notify()` is one static method hardcoded to print everything as one format. Different channels (SMS, Email, Push) genuinely need different formatting and delivery mechanics — this is the exact same shape as `Persistence`/`PaymentStrategy` from earlier, just not named as Strategy yet.
+
+```mermaid
+classDiagram
+    NotificationService <|-- SMSNotificationService
+    NotificationService <|-- EmailNotificationService
+    class NotificationService { <<abstract>> +notify(order) }
+    class SMSNotificationService { +notify(order) }
+    class EmailNotificationService { +notify(order) }
+```
+
+```cpp
+// services/NotificationService.h
+#ifndef NOTIFICATION_SERVICE_H
+#define NOTIFICATION_SERVICE_H
+#include "../models/Order.h"
+class NotificationService {
+public:
+    virtual void notify(Order* order) = 0;
+    virtual ~NotificationService() {}
+};
+#endif // NOTIFICATION_SERVICE_H
+```
+
+```cpp
+// services/SMSNotificationService.h
+#ifndef SMS_NOTIFICATION_SERVICE_H
+#define SMS_NOTIFICATION_SERVICE_H
+#include "NotificationService.h"
+#include <iostream>
+using namespace std;
+class SMSNotificationService : public NotificationService {
+public:
+    void notify(Order* order) override {
+        cout << "[SMS] Order #" << order->getOrderId() << " confirmed for "
+             << order->getUser()->getName() << ". Total: Rs." << order->getTotal() << endl;
+    }
+};
+#endif
+```
+
+```cpp
+// services/EmailNotificationService.h
+#ifndef EMAIL_NOTIFICATION_SERVICE_H
+#define EMAIL_NOTIFICATION_SERVICE_H
+#include "NotificationService.h"
+#include <iostream>
+using namespace std;
+class EmailNotificationService : public NotificationService {
+public:
+    void notify(Order* order) override {
+        cout << "[Email] Dear " << order->getUser()->getName()
+             << ", your " << order->getType() << " order #" << order->getOrderId()
+             << " is confirmed. Total: Rs." << order->getTotal() << endl;
+    }
+};
+#endif
+```
+
+```cpp
+// TomatoApp.h — payForOrder now depends on the abstraction, injected at construction
+class TomatoApp {
+private:
+    NotificationService* notificationService;
+public:
+    TomatoApp(NotificationService* ns) : notificationService(ns) { initializeRestaurants(); }
+
+    void payForOrder(User* user, Order* order) {
+        bool isPaymentSuccess = order->processPayment();
+        if (isPaymentSuccess) {
+            notificationService->notify(order);   // no longer knows which channel
+            user->getCart()->clear();
+        }
+    }
+    // ...
+};
+```
+
+**SOLID gained:** LSP + ISP + DIP together. LSP — every `NotificationService` genuinely implements `notify()`, no "not supported" branch. ISP — one method, nothing forced. DIP — `TomatoApp` now depends on `NotificationService*` (abstraction), injected via constructor, not a concrete class. **Relation used:** classic inheritance (`<|--`) for the interface hierarchy, same shape as `PaymentStrategy`/`OrderFactory`.
+
+**Note on Observer (from earlier flag):** this fix alone doesn't yet give you Observer — it's still one `TomatoApp` calling one `notificationService->notify()` directly, just now polymorphic instead of hardcoded. True Observer would let _multiple_ notification channels fire off the same event simultaneously (SMS _and_ Email _and_ Push, all without `TomatoApp` looping over them itself) — worth attempting as a follow-up once Observer is covered in the playlist.
+
+##### Improvement 3 — Layered orchestration (Controller / Service separation)
+
+**Why:** `TomatoApp` currently does everything — holds restaurant setup data, sequences cart operations, calls factories, calls payment, calls notification. This is the same smell caught back in Document Editor: one class knowing too much, doing too much, violating both SRP and the Principle of Least Knowledge. The video's fix: split into layers, each with one job.
+
+```mermaid
+classDiagram
+    RestaurantController --> RestaurantService
+    CartController --> CartService
+    OrderController --> OrderService
+    RestaurantService --> RestaurantManager
+    CartService --> User
+    OrderService --> OrderFactory
+    OrderService --> PaymentStrategy
+    OrderService --> NotificationService
+
+    class RestaurantController { +searchRestaurants(location) }
+    class CartController { +addToCart(user, itemCode) }
+    class OrderController { +checkout(user, type, strategy) }
+    class RestaurantService { +searchByLocation(location) }
+    class CartService { +addItem(user, itemCode) }
+    class OrderService { +placeOrder(user, type, strategy, factory) +pay(user, order) }
+```
+
+```cpp
+// services/RestaurantService.h — owns restaurant-search business logic only
+class RestaurantService {
+public:
+    vector<Restaurant*> searchByLocation(const string& location) {
+        return RestaurantManager::getInstance()->searchByLocation(location);
+    }
+};
+```
+
+```cpp
+// services/CartService.h — owns cart-mutation business logic only
+class CartService {
+public:
+    void addItem(User* user, const string& itemCode) {
+        Restaurant* restaurant = user->getCart()->getRestaurant();
+        if (!restaurant) { cout << "Please select a restaurant first." << endl; return; }
+        for (const auto& item : restaurant->getMenu()) {
+            if (item.getCode() == itemCode) { user->getCart()->addItem(item); break; }
+        }
+    }
+};
+```
+
+```cpp
+// services/OrderService.h — owns checkout + payment business logic only
+class OrderService {
+private:
+    NotificationService* notificationService;
+public:
+    OrderService(NotificationService* ns) : notificationService(ns) {}
+
+    Order* placeOrder(User* user, const string& orderType, PaymentStrategy* strategy, OrderFactory* factory) {
+        if (user->getCart()->isEmpty()) return nullptr;
+        Cart* cart = user->getCart();
+        Order* order = factory->createOrder(user, cart, cart->getRestaurant(), cart->getItems(),
+                                             strategy, cart->getTotalCost(), orderType);
+        OrderManager::getInstance()->addOrder(order);
+        return order;
+    }
+
+    void pay(User* user, Order* order) {
+        if (order->processPayment()) {
+            notificationService->notify(order);
+            user->getCart()->clear();
+        }
+    }
+};
+```
+
+```cpp
+// controllers/RestaurantController.h — thin layer, just forwards to the service
+class RestaurantController {
+    RestaurantService* service;
+public:
+    RestaurantController(RestaurantService* s) : service(s) {}
+    vector<Restaurant*> searchRestaurants(const string& location) {
+        return service->searchByLocation(location);
+    }
+};
+```
+
+**SOLID gained:** SRP, cleanly — `RestaurantService` only knows about restaurant search, `CartService` only about cart mutation, `OrderService` only about checkout+payment. Controllers become thin pass-throughs (this is literally the same "thin client-facing layer" role `DocumentEditor` played after its own SRP split). **Relation used:** plain association/dependency (`-->`) from each controller to its one corresponding service — no inheritance needed here, just delegation.
+
+**Trade-off, stated honestly:** this is real added structure — more files, more indirection to trace through — for a genuine payoff: each layer can now change independently (swap how orders are persisted without touching cart logic; add a REST API layer on top of controllers without touching services). For an interview, mentioning this layering as "here's how I'd structure it in a larger system" is a strong signal, but building it fully from scratch under 45 minutes may not be necessary unless asked.
+
+#### Remaining improvement points (not yet applied)
+
+1. **Long parameter list smell:** `createOrder(user, cart, restaurant, menuItems, paymentStrategy, totalCost, orderType)` — 7 parameters, will only grow. Natural later refactor: bundle into a single `OrderRequest` parameter object.
+2. Raw pointers + manual `new`/`delete` everywhere (no smart pointers) — fine for an interview/learning context, but worth knowing this isn't modern production C++ style if that ever comes up.
