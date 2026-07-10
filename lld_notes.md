@@ -2180,8 +2180,8 @@ class CharacterDecorator : public Character {
 protected:
     Character* character;
 public:
-    CharacterDecorator(Character* c) { character = c; }
-};
+    explicit CharacterDecorator(Character* c) : character(c) {}
+    virtual ~CharacterDecorator() { delete character; }
 
 class HeightUp : public CharacterDecorator {
 public:
