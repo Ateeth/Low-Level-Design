@@ -2426,13 +2426,13 @@ classDiagram
 #### Relations used (mapped to Part 2 vocabulary)
 
 | Relation                     | Between                                                         | Why this one                                                                             |
-| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | Composition (filled diamond) | `User *-- Cart`                                                 | `Cart` has no meaning outside its `User`; created/destroyed with it                      |
 | Composition (filled diamond) | `Order *-- PaymentStrategy`                                     | `Order` owns and deletes its strategy in its own destructor                              |
 | Composition, by-value        | `Cart`/`Restaurant`/`Order` \*-- `MenuItem`                     | Each container stores its own copies (`vector<MenuItem>`), not shared pointers           |
 | Aggregation (hollow diamond) | `RestaurantManager o-- Restaurant`, `OrderManager o-- Order`    | Managers hold collections but don't fundamentally own the objects' conceptual existence  |
-| Inheritance                  | `Order <                                                        | -- DeliveryOrder/PickupOrder`                                                            | Genuine is-a — both honestly implement everything `Order` promises |
-| Inheritance                  | `PaymentStrategy <                                              | -- CreditCard/Upi`, `OrderFactory <                                                      | -- Now/Scheduled`                                                  | Same — Strategy and Factory Method hierarchies |
+| Inheritance                  | `Order <|-- DeliveryOrder/PickupOrder`                          | Genuine is-a — both honestly implement everything `Order` promises |
+| Inheritance                  | `PaymentStrategy <|-- CreditCard/Upi`, `OrderFactory <|-- Now/Scheduled` | Same — Strategy and Factory Method hierarchies |
 | Association (plain arrow)    | `Cart --> Restaurant`, `Order --> User`, `Order --> Restaurant` | Weak reference, non-owning — `Order` doesn't control `User`'s or `Restaurant`'s lifetime |
 | Dependency/creates           | `OrderFactory --> Order`, `TomatoApp --> ...`                   | One class uses/creates another without owning it structurally                            |
 
