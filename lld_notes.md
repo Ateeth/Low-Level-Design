@@ -2462,8 +2462,8 @@ public:
     void setPaymentStrategy(PaymentStrategy* p) { paymentStrategy = p; }
     void setScheduled(const string& s) { scheduled = s; }
     string getScheduled() const { return scheduled; }
-    double getTotal() const { return total; }
-    void setTotal(int total) { this->total = total; }
+double getTotal() const { return total; }
+void setTotal(double total) { this->total = total; }
 };
 int Order::nextOrderId = 0;
 #endif // ORDER_H
