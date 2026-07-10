@@ -2756,9 +2756,10 @@ public:
         return checkout(user, orderType, paymentStrategy, new NowOrderFactory());
     }
 
-    Order* checkoutScheduled(User* user, const string& orderType, PaymentStrategy* paymentStrategy, const string& scheduleTime) {
-        return checkout(user, orderType, paymentStrategy, new ScheduledOrderFactory(scheduleTime));
-    }
+Order* checkoutScheduled(User* user, const string& orderType, PaymentStrategy* paymentStrategy, const string& scheduleTime) {
+    ScheduledOrderFactory factory(scheduleTime);
+    return checkout(user, orderType, paymentStrategy, &factory);
+}
 
     Order* checkout(User* user, const string& orderType,
                      PaymentStrategy* paymentStrategy, OrderFactory* orderFactory) {
