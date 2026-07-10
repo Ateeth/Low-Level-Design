@@ -1954,7 +1954,7 @@ classDiagram
         +notifySubscribers()
     }
     class Observable {
-        #subscribers: vector~ISubscriber~
+        #subscribers: vector~ISubscriber*~
         +subscribe(sub)
         +unsubscribe(sub)
         +notifySubscribers()
