@@ -1851,7 +1851,7 @@ classDiagram
         +update()
     }
     class Channel {
-        -subscribers: vector~ISubscriber~
+        -subscribers: vector~ISubscriber*~
         -name: string
         -latestVideo: string
         +uploadVideo(title)
