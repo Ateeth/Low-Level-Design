@@ -2536,7 +2536,7 @@ public:
         }
     }
 };
-OrderManager* OrderManager::instance = nullptr;
+inline OrderManager* OrderManager::instance = nullptr;
 #endif // ORDER_MANAGER_H
 ```
 
