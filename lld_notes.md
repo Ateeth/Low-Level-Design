@@ -1859,7 +1859,7 @@ classDiagram
     }
     class Subscriber {
         -name: string
-        -channel: Channel
+        -channel: Channel*
         +update()
     }
 ```
