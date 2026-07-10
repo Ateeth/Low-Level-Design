@@ -2247,7 +2247,7 @@ public:
     void addMenuItem(const MenuItem &item) { menu.push_back(item); }
     const vector<MenuItem>& getMenu() const { return menu; }
 };
-int Restaurant::nextRestaurantId = 0;
+inline int Restaurant::nextRestaurantId = 0;
 #endif // RESTAURANT_H
 ```
 
