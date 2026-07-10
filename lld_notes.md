@@ -2465,7 +2465,7 @@ public:
 double getTotal() const { return total; }
 void setTotal(double total) { this->total = total; }
 };
-int Order::nextOrderId = 0;
+inline int Order::nextOrderId = 0;
 #endif // ORDER_H
 ```
 
