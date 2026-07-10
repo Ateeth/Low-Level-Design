@@ -1800,7 +1800,7 @@ _(Note: Java classes are not Singleton "by default" — a plain Java class behav
 
 **Definition:** Defines a one-to-many dependency between objects, so that when one object (the _Subject_/_Observable_) changes state, all its dependents (_Observers_) are notified automatically — without the Subject needing to know any concrete detail about who's listening or how many there are.
 
-**Where this sits relative to what you know:** this is the pattern that actually solves the gap flagged back in Zomato's Improvement 2. Making `NotificationService` abstract (SMS/Email subclasses) only got you _one_ polymorphic channel per order. Observer is what lets _multiple_ channels react to the same event simultaneously, without the publisher looping over them itself.
+**Where this sits relative to what you know:** this pattern addresses the common gap where making `NotificationService` abstract (SMS/Email subclasses) still gives you only _one_ polymorphic channel per order. Observer is what lets _multiple_ channels react to the same event simultaneously, without the publisher looping over them itself.
 
 #### Why this pattern exists — the bad design first
 
