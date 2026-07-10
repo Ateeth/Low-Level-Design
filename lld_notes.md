@@ -2632,7 +2632,7 @@ classDiagram
 #### Relations used (mapped to Part 2 vocabulary)
 
 | Relation                     | Between                                                         | Why this one                                                                             |
-| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------- |
+| ---------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | Composition (filled diamond) | `User *-- Cart`                                                 | `Cart` has no meaning outside its `User`; created/destroyed with it                      |
 | Composition (filled diamond) | `Order *-- PaymentStrategy`                                     | `Order` owns and deletes its strategy in its own destructor                              |
 | Composition, by-value        | `Cart`/`Restaurant`/`Order` \*-- `MenuItem`                     | Each container stores its own copies (`vector<MenuItem>`), not shared pointers           |
