@@ -2752,9 +2752,10 @@ public:
         }
     }
 
-    Order* checkoutNow(User* user, const string& orderType, PaymentStrategy* paymentStrategy) {
-        return checkout(user, orderType, paymentStrategy, new NowOrderFactory());
-    }
+Order* checkoutNow(User* user, const string& orderType, PaymentStrategy* paymentStrategy) {
+    NowOrderFactory factory;
+    return checkout(user, orderType, paymentStrategy, &factory);
+}
 
 Order* checkoutScheduled(User* user, const string& orderType, PaymentStrategy* paymentStrategy, const string& scheduleTime) {
     ScheduledOrderFactory factory(scheduleTime);
