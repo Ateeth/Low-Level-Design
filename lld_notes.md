@@ -1984,8 +1984,6 @@ int main() {
 
 **Optional further enhancement (not required as-is):** `DocumentEditor` here still knows about both `Document` _and_ `Persistence` — technically a mild Principle of Least Knowledge (Law of Demeter) stretch, since it's reaching slightly beyond just "add elements" into orchestrating render+save too. The video's suggested fix is to split `render()` into its own `DocumentRenderer` class and introduce a separate `Client` class that owns `Document`, `DocumentRenderer`, `Persistence`, and `DocumentEditor`, calling each in the right order — so `DocumentEditor` only ever touches `Document`.
 
-This is a legitimate improvement, but treat it as optional, not mandatory: it trades one extra coordination-only class for slightly looser coupling. In an interview, the v2 solution above is already solid enough to defend on its own — mentioning this as a "here's a further refinement I'd ccd ..onsider, with this trade-off" is a good verbal addition if there's time, not something you need to build by default.
-
 ### Problem 2: Zomato — Food Delivery App
 
 **Requirements:** user can search restaurants by location; add items to cart; checkout by making payment; get notified when order is placed successfully.
