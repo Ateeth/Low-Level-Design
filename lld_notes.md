@@ -62,6 +62,11 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
       - [The key trick worth sitting with: is-a AND has-a, together](#the-key-trick-worth-sitting-with-is-a-and-has-a-together)
       - [Real-world examples](#real-world-examples-2)
       - [Ties to what you already know](#ties-to-what-you-already-know-1)
+    - [4.6 Command Pattern](#46-command-pattern)
+      - [Why this pattern exists — the bad design first](#why-this-pattern-exists--the-bad-design-first-5)
+      - [The fix — Command](#the-fix--command)
+      - [Real-world examples (as covered in the video, matched to the pattern)](#real-world-examples-as-covered-in-the-video-matched-to-the-pattern)
+      - [Ties to what you already know](#ties-to-what-you-already-know-2)
   - [LLD Problems — Solved](#lld-problems--solved)
     - [Problem 1: Document Editor (Google Docs)](#problem-1-document-editor-google-docs)
     - [Problem 2: Zomato — Food Delivery App](#problem-2-zomato--food-delivery-app)
@@ -2253,6 +2258,168 @@ Every other pattern so far picked _one_ relationship: Strategy is has-a (composi
 **Interview signal:** if a design needs to add responsibilities that **stack** — any subset, any order, at runtime — and a subclass-per-combination or boolean-flags approach is starting to explode, that's Decorator. The tell in your own head should be: "this needs behavior layered on top of behavior," not "this needs to pick one of several behaviors" (that's Strategy) and not "this needs to decide which object to build in the first place" (that's Factory).
 
 ---
+
+### 4.6 Command Pattern
+
+**Definition:** Encapsulates a request as a standalone object, so you can parametrize clients with different requests, queue or log requests, and support undoable operations — all without the caller (Invoker) needing to know anything about how the request is actually carried out (Receiver).
+
+#### Why this pattern exists — the bad design first
+
+```cpp
+// Bad: RemoteController directly knows about every device and branches on button index
+class RemoteController {
+    Light* light;
+    Fan* fan;
+public:
+    void pressButton(int idx) {
+        if (idx == 0) light->on();
+        else if (idx == 1) fan->on();
+        // New device? New button? Edit this method again — OCP violated.
+        // Also: no way to log what was pressed, queue it, or undo it generically —
+        // the "request" only exists as a momentary function call, never as an object.
+    }
+};
+```
+
+Two problems: `RemoteController` is tightly coupled to every concrete device (`Light`, `Fan`, ...), and because the request itself is never _represented as anything_ — it's just an inline method call — there's nothing to store, log, queue, or hand back later for undo.
+
+#### The fix — Command
+
+The core move: wrap every request in its own class implementing a common `execute()`/`undo()` interface. The Invoker (`RemoteController`) holds `Command*`, never a concrete `Light*`/`Fan*` — it doesn't even know these devices exist.
+
+**Key components (standard GoF shape):**
+
+- **`Command`** — abstract interface: `execute()`, and often `undo()`
+- **`ConcreteCommand`** (`LightCommand`, `FanCommand`) — binds one specific action to one specific `Receiver`
+- **`Receiver`** (`Light`, `Fan`) — the object that actually knows how to perform the action; has no idea Command exists
+- **`Invoker`** (`RemoteController`) — holds `Command*` references and calls `execute()`/`undo()`, without knowing what's behind them
+- **`Client`** (`main()`) — wires up which `ConcreteCommand` goes with which `Receiver`, and hands it to the `Invoker`
+
+```mermaid
+classDiagram
+    Command <|-- LightCommand
+    Command <|-- FanCommand
+    LightCommand --> Light : Receiver
+    FanCommand --> Fan : Receiver
+    RemoteController o-- Command : Invoker holds
+
+    class Command { <<abstract>> +execute() +undo() }
+    class Light { +on() +off() }
+    class Fan { +on() +off() }
+    class LightCommand { +execute() +undo() }
+    class FanCommand { +execute() +undo() }
+    class RemoteController {
+        -buttons: Command[]
+        +setCommand(idx, cmd)
+        +pressButton(idx)
+    }
+```
+
+**Your code, annotated (correct pattern shape, with the two issues flagged above):**
+
+```cpp
+class Command {
+public:
+    virtual void execute() = 0;
+    virtual void undo() = 0;
+    virtual ~Command() {}
+};
+
+class Light {
+public:
+    void on()  { cout << "Light is ON" << endl; }
+    void off() { cout << "Light is OFF" << endl; }
+};
+class Fan {
+public:
+    void on()  { cout << "Fan is ON" << endl; }
+    void off() { cout << "Fan is OFF" << endl; }
+};
+
+class LightCommand : public Command {
+    Light* light;
+public:
+    LightCommand(Light* l) { light = l; }
+    void execute() override { light->on(); }
+    void undo() override { light->off(); }
+};
+class FanCommand : public Command {
+    Fan* fan;
+public:
+    FanCommand(Fan* f) { fan = f; }
+    void execute() override { fan->on(); }
+    void undo() override { fan->off(); }
+};
+
+class RemoteController {
+    static const int numButtons = 4;   // was mismatched with a comment saying "6 buttons, 2D"
+    Command* buttons[numButtons];
+    bool buttonPressed[numButtons];    // toggle-state per button — see note below
+public:
+    RemoteController() {
+        for (int i = 0; i < numButtons; i++) { buttons[i] = nullptr; buttonPressed[i] = false; }
+    }
+    void setCommand(int idx, Command* cmd) {
+        if (idx >= 0 && idx < numButtons) {
+            if (buttons[idx] != nullptr) delete buttons[idx];
+            buttons[idx] = cmd;
+            buttonPressed[idx] = false;
+        }
+    }
+    void pressButton(int idx) {
+        if (idx >= 0 && idx < numButtons && buttons[idx] != nullptr) {
+            if (!buttonPressed[idx]) buttons[idx]->execute();
+            else buttons[idx]->undo();
+            buttonPressed[idx] = !buttonPressed[idx];
+        } else {
+            cout << "No command assigned at button " << idx << endl;
+        }
+    }
+    ~RemoteController() {
+        for (int i = 0; i < numButtons; i++) if (buttons[i] != nullptr) delete buttons[i];
+    }
+};
+```
+
+**Why the toggle design is a real simplification, not the general pattern:** here, `undo()` just happens to be the literal opposite of `execute()` (on ↔ off), so tracking one boolean per button is enough. But Command's actual famous use case — a text editor's Ctrl+Z — needs something stronger: an **Invoker-side history stack** of _already-executed_ command objects, so a single global Undo button can always undo whatever was _most recently done_, regardless of which button/action did it, and regardless of whether that action's own "undo" is a simple opposite or requires remembering state (e.g. undoing "typed the letter X" means deleting exactly that letter, which the command object must have stored when it executed).
+
+**The general-purpose version, for contrast:**
+
+```cpp
+class RemoteController {
+    Command* buttons[numButtons];
+    stack<Command*> history;   // tracks what's actually been executed, in order
+public:
+    void pressButton(int idx) {
+        if (buttons[idx]) {
+            buttons[idx]->execute();
+            history.push(buttons[idx]);   // remember it happened
+        }
+    }
+    void pressUndo() {                    // one single global Undo button
+        if (!history.empty()) {
+            history.top()->undo();
+            history.pop();
+        }
+    }
+};
+```
+
+This version can undo the _last thing that happened_, across any button, any device — which your toggle version genuinely cannot do (it can only undo the specific button you last pressed, and only if you press that same button again).
+
+#### Real-world examples (as covered in the video, matched to the pattern)
+
+- **Text editor (bold, italic, typing)** — each keystroke/formatting action is a `Command` object pushed onto a history stack; Ctrl+Z pops and calls `undo()`. This needs the history-stack version above, not the toggle version, since undo must always target "whatever happened last," not "whatever button you're currently pointing at."
+- **Photoshop** — every brush stroke, filter, or transform is a `Command`; the Undo/Redo history panel is literally a visible, navigable command history stack.
+- **Keyboard shortcuts** — binding Ctrl+B to a `BoldCommand` object is the same Invoker/Command separation as the remote's buttons: the keyboard handler doesn't know what "bold" does, it just calls `execute()` on whatever `Command` is mapped to that key combination — directly mirroring `RemoteController::setCommand()`.
+
+#### Ties to what you already know
+
+- **DIP** — `RemoteController` depends on `Command*`, never on `Light`/`Fan` directly; same shape as `Order` depending on `PaymentStrategy*`.
+- **OCP** — a new device (`Thermostat`) is a new `ThermostatCommand` class; zero edits to `RemoteController`.
+- **Compared to Strategy:** structurally almost identical (`Invoker o-- Command`, `Client o-- Strategy`) — both are "hold a reference to an interface, inject the concrete implementation." The difference is intent: Strategy swaps _how an ongoing operation behaves_; Command represents _a discrete, storable, undoable action_ — the fact that it can be logged, queued, or undone later is the whole point of Command and isn't part of what Strategy promises.
+
+**Interview signal:** if a design needs to **queue actions, log a history of what happened, or support undo/redo**, that's Command — and specifically, if "undo" needs to work generically across different kinds of actions (not just flip a boolean), that's the signal you need an Invoker-side history stack, not per-action toggle state.
 
 ## LLD Problems — Solved
 
