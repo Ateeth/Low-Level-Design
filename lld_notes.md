@@ -75,6 +75,12 @@ Part 1: OOP Fundamentals · Part 2: UML Diagrams · Part 3: SOLID (S, O, L, I, D
         - [Improvement 2 — NotificationService made abstract, with concrete SMS/Email](#improvement-2--notificationservice-made-abstract-with-concrete-smsemail)
         - [Improvement 3 — Layered orchestration (Controller / Service separation)](#improvement-3--layered-orchestration-controller--service-separation)
       - [Remaining improvement points (not yet applied)](#remaining-improvement-points-not-yet-applied)
+    - [Problem 3: Notification Engine](#problem-3-notification-engine)
+      - [Class diagram](#class-diagram)
+      - [What each class does](#what-each-class-does-1)
+      - [How SOLID is maintained](#how-solid-is-maintained-1)
+      - [Relations used](#relations-used)
+      - [Full code (with bugs #1 and #2 below fixed inline)](#full-code-with-bugs-1-and-2-below-fixed-inline)
 
 ---
 
@@ -3515,3 +3521,360 @@ public:
 
 1. **Long parameter list smell:** `createOrder(user, cart, restaurant, menuItems, paymentStrategy, totalCost, orderType)` — 7 parameters, will only grow. Natural later refactor: bundle into a single `OrderRequest` parameter object.
 2. Raw pointers + manual `new`/`delete` everywhere (no smart pointers) — fine for an interview/learning context, but worth knowing this isn't modern production C++ style if that ever comes up.
+
+### Problem 3: Notification Engine
+
+**Requirements:** send a notification that can be dynamically decorated (timestamp, signature, etc.); any number of subscribers should be notified when a new notification is sent; each subscriber decides _how_ to deliver it (log it, dispatch via email/SMS/popup); the whole system should be reachable from one central access point.
+
+**Three patterns, three different jobs — this is the key insight to hold onto:**
+
+- **Decorator** answers _"what does the notification's content look like?"_ — layering timestamp/signature onto a base message, any combination, at runtime.
+- **Observer** answers _"who needs to know a new notification exists?"_ — an open-ended, runtime-determined set of subscribers, none hardcoded.
+- **Strategy** answers _"how does this particular subscriber act on it?"_ — one subscriber (`NotificationEngine`) doesn't just receive the event, it dispatches through a _list_ of delivery strategies (Email, SMS, Popup).
+- **Singleton** (`NotificationService`) is the thread tying all three together — one shared access point the whole app talks to.
+  This composition is the direct answer to the "further improvement" flagged back in Zomato's notes: Observer is what lets multiple channels react to one event without the publisher naming them, and Strategy is what lets _each_ channel further branch into multiple delivery mechanisms.
+
+#### Class diagram
+
+```mermaid
+classDiagram
+    INotification <|-- SimpleNotification
+    INotification <|-- INotificationDecorator
+    INotificationDecorator o-- INotification : has-a
+    INotificationDecorator <|-- TimestampDecorator
+    INotificationDecorator <|-- SignatureDecorator
+
+    IObservable <|-- NotificationObservable
+    NotificationObservable o-- IObserver : notifies
+    NotificationObservable *-- INotification : owns current
+
+    IObserver <|-- Logger
+    IObserver <|-- NotificationEngine
+    Logger --> NotificationObservable
+    NotificationEngine --> NotificationObservable
+    NotificationEngine o-- INotificationStrategy
+
+    INotificationStrategy <|-- EmailStrategy
+    INotificationStrategy <|-- SMSStrategy
+    INotificationStrategy <|-- PopUpStrategy
+
+    NotificationService o-- NotificationObservable
+    NotificationService *-- INotification : notifications list
+
+    class INotification { <<abstract>> +getContent() string }
+    class SimpleNotification { -text: string +getContent() string }
+    class INotificationDecorator { <<abstract>> #notification: INotification }
+    class TimestampDecorator { +getContent() string }
+    class SignatureDecorator { -signature: string +getContent() string }
+
+    class IObserver { <<abstract>> +update() }
+    class IObservable { <<abstract>> +addObserver(o) +removeObserver(o) +notifyObservers() }
+    class NotificationObservable {
+        -observers: vector~IObserver~
+        -currentNotification: INotification
+        +setNotification(n)
+        +getNotificationContent() string
+    }
+
+    class Logger { -notificationObservable: NotificationObservable +update() }
+    class NotificationEngine {
+        -notificationObservable: NotificationObservable
+        -notificationStrategies: vector~INotificationStrategy~
+        +addNotificationStrategy(ns)
+        +update()
+    }
+
+    class INotificationStrategy { <<abstract>> +sendNotification(content) }
+    class EmailStrategy { -emailId: string +sendNotification(content) }
+    class SMSStrategy { -mobileNumber: string +sendNotification(content) }
+    class PopUpStrategy { +sendNotification(content) }
+
+    class NotificationService {
+        <<Singleton>>
+        -instance: NotificationService$
+        -observable: NotificationObservable
+        -notifications: vector~INotification~
+        +getInstance() NotificationService$
+        +getObservable() NotificationObservable
+        +sendNotification(n)
+    }
+```
+
+#### What each class does
+
+- **`INotification` / `SimpleNotification`** — the Decorator's Component/ConcreteComponent: a plain notification is just wrapped text.
+- **`INotificationDecorator`** — abstract Decorator; is-a `INotification` and has-a `INotification*` — the same dual relationship as `CharacterDecorator` from Part 4.5.
+- **`TimestampDecorator` / `SignatureDecorator`** — each wraps and prepends/appends its own bit, then delegates to the wrapped object.
+- **`IObservable` / `NotificationObservable`** — the Subject: holds the subscriber list and the _current_ notification; `setNotification()` swaps in a new one and immediately fires `notifyObservers()`.
+- **`IObserver`** — one-method interface every subscriber implements.
+- **`Logger`** — a concrete Observer that just prints whatever notification fired.
+- **`NotificationEngine`** — a concrete Observer that, on `update()`, loops through a list of `INotificationStrategy` and dispatches through each — this is the point where Observer hands off to Strategy.
+- **`INotificationStrategy` / `EmailStrategy` / `SMSStrategy` / `PopUpStrategy`** — Strategy pattern for the actual delivery mechanism.
+- **`NotificationService`** (Singleton) — the one shared entry point; owns the one `NotificationObservable`, and `sendNotification()` is what client code actually calls.
+
+#### How SOLID is maintained
+
+| Principle | Where                                                                                                                                                                                                            |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| SRP       | Decorators only modify content; `NotificationObservable` only manages subscribers + current notification; `Logger`/`NotificationEngine` only react; each `INotificationStrategy` only knows one delivery channel |
+| OCP       | New decoration = new `INotificationDecorator` subclass; new subscriber = new `IObserver` subclass; new delivery channel = new `INotificationStrategy` subclass — no existing class edited in any case            |
+| LSP       | Every decorator, observer, and strategy genuinely implements its one method — no "not supported" branch anywhere in this design                                                                                  |
+| ISP       | `INotification`, `IObserver`, `INotificationStrategy` are all single-method interfaces                                                                                                                           |
+| DIP       | `NotificationObservable` depends on `IObserver*`, never a concrete `Logger`; `NotificationEngine` depends on `INotificationStrategy*`, never a concrete `EmailStrategy`                                          |
+
+#### Relations used
+
+| Relation                                               | Between                                                                              | Why                                                                                                                |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| is-a + has-a (Decorator's signature dual relationship) | `INotificationDecorator` → `INotification` (both)                                    | Same trick as `CharacterDecorator` — a decorator must be substitutable _as_ a notification while also wrapping one |
+| Aggregation                                            | `NotificationObservable o-- IObserver`                                               | Subscribers can exist independently of any one Observable                                                          |
+| Composition                                            | `NotificationObservable *-- INotification` (current one)                             | Observable owns and deletes its current notification in its own destructor/on replacement                          |
+| Composition                                            | `NotificationEngine o-- INotificationStrategy`                                       | Strategies are added per-engine and conceptually belong to it, though stored as pointers here                      |
+| Association                                            | `Logger --> NotificationObservable`, `NotificationEngine --> NotificationObservable` | Observers hold a reference back to the Subject they watch — same pull-model shape as the YouTube Observer example  |
+
+#### Full code (with bugs #1 and #2 below fixed inline)
+
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+using namespace std;
+
+/*============================
+      Notification & Decorators
+=============================*/
+
+class INotification {
+public:
+    virtual string getContent() const = 0;
+    virtual ~INotification() {}
+};
+
+class SimpleNotification : public INotification {
+private:
+    string text;
+public:
+    SimpleNotification(const string& msg) { text = msg; }
+    string getContent() const override { return text; }
+};
+
+class INotificationDecorator : public INotification {
+protected:
+    INotification* notification;
+public:
+    INotificationDecorator(INotification* n) { notification = n; }
+    virtual ~INotificationDecorator() { delete notification; }
+};
+
+class TimestampDecorator : public INotificationDecorator {
+public:
+    TimestampDecorator(INotification* n) : INotificationDecorator(n) {}
+    string getContent() const override {
+        return "[2025-04-13 14:22:00] " + notification->getContent();
+    }
+};
+
+class SignatureDecorator : public INotificationDecorator {
+private:
+    string signature;
+public:
+    SignatureDecorator(INotification* n, const string& sig) : INotificationDecorator(n) {
+        signature = sig;
+    }
+    string getContent() const override {
+        return notification->getContent() + "\n-- " + signature + "\n\n";
+    }
+};
+
+/*============================
+  Observer Pattern Components
+=============================*/
+
+class IObserver {
+public:
+    virtual void update() = 0;
+    virtual ~IObserver() {}
+};
+
+class IObservable {
+public:
+    virtual void addObserver(IObserver* observer) = 0;
+    virtual void removeObserver(IObserver* observer) = 0;
+    virtual void notifyObservers() = 0;
+    virtual ~IObservable() {}
+};
+
+class NotificationObservable : public IObservable {
+private:
+    vector<IObserver*> observers;
+    INotification* currentNotification;
+public:
+    NotificationObservable() { currentNotification = nullptr; }
+
+    void addObserver(IObserver* obs) override { observers.push_back(obs); }
+
+    void removeObserver(IObserver* obs) override {
+        observers.erase(remove(observers.begin(), observers.end(), obs), observers.end());
+    }
+
+    void notifyObservers() override {
+        for (unsigned int i = 0; i < observers.size(); i++) observers[i]->update();
+    }
+
+    // NOTE: takes ownership of `notification` and deletes the previous one.
+    // See bug #1 below — NotificationService must not also keep an owning
+    // pointer to the same object once it's handed here.
+    void setNotification(INotification* notification) {
+        if (currentNotification != nullptr) delete currentNotification;
+        currentNotification = notification;
+        notifyObservers();
+    }
+
+    INotification* getNotification() { return currentNotification; }
+    string getNotificationContent() { return currentNotification->getContent(); }
+
+    ~NotificationObservable() {
+        if (currentNotification != nullptr) delete currentNotification;
+    }
+};
+
+/*============================
+       NotificationService
+=============================*/
+
+// Singleton class — FIXED for bug #1: no longer keeps a second owning
+// pointer in `notifications`. NotificationObservable is the single owner
+// of "current notification" lifetime; this class only keeps content
+// snapshots (strings) if history is ever needed, never raw pointers to
+// objects it doesn't control the deletion of.
+class NotificationService {
+private:
+    NotificationObservable* observable;
+    static NotificationService* instance;
+
+    NotificationService() { observable = new NotificationObservable(); }
+
+public:
+    static NotificationService* getInstance() {
+        if (instance == nullptr) instance = new NotificationService();
+        return instance;
+    }
+
+    NotificationObservable* getObservable() { return observable; }
+
+    void sendNotification(INotification* notification) {
+        observable->setNotification(notification); // sole owner from here on
+    }
+
+    ~NotificationService() { delete observable; }
+};
+NotificationService* NotificationService::instance = nullptr;
+
+/*============================
+       ConcreteObservers
+=============================*/
+
+class Logger : public IObserver {
+private:
+    NotificationObservable* notificationObservable;
+public:
+    Logger() {
+        notificationObservable = NotificationService::getInstance()->getObservable();
+        notificationObservable->addObserver(this);
+    }
+    Logger(NotificationObservable* observable) {
+        notificationObservable = observable;
+        notificationObservable->addObserver(this);
+    }
+    void update() override {
+        cout << "Logging New Notification : \n" << notificationObservable->getNotificationContent();
+    }
+};
+
+/*============================
+  Strategy Pattern Components (Concrete Observer 2)
+=============================*/
+
+class INotificationStrategy {
+public:
+    virtual void sendNotification(string content) = 0;
+    virtual ~INotificationStrategy() {}
+};
+
+class EmailStrategy : public INotificationStrategy {
+private:
+    string emailId;
+public:
+    EmailStrategy(string emailId) { this->emailId = emailId; }
+    void sendNotification(string content) override {
+        cout << "Sending email Notification to: " << emailId << "\n" << content;
+    }
+};
+
+class SMSStrategy : public INotificationStrategy {
+private:
+    string mobileNumber;
+public:
+    SMSStrategy(string mobileNumber) { this->mobileNumber = mobileNumber; }
+    void sendNotification(string content) override {
+        cout << "Sending SMS Notification to: " << mobileNumber << "\n" << content;
+    }
+};
+
+class PopUpStrategy : public INotificationStrategy {
+public:
+    void sendNotification(string content) override {
+        cout << "Sending Popup Notification: \n" << content;
+    }
+};
+
+class NotificationEngine : public IObserver {
+private:
+    NotificationObservable* notificationObservable;
+    vector<INotificationStrategy*> notificationStrategies;
+public:
+    NotificationEngine() {
+        notificationObservable = NotificationService::getInstance()->getObservable();
+        notificationObservable->addObserver(this);
+    }
+    // FIXED for bug #2: this overload now subscribes too, matching Logger's behavior.
+    NotificationEngine(NotificationObservable* observable) {
+        notificationObservable = observable;
+        notificationObservable->addObserver(this);
+    }
+
+    void addNotificationStrategy(INotificationStrategy* ns) {
+        notificationStrategies.push_back(ns);
+    }
+    // Could add removeNotificationStrategy() for symmetry — see improvement points.
+
+    void update() override {
+        string notificationContent = notificationObservable->getNotificationContent();
+        for (const auto notificationStrategy : notificationStrategies) {
+            notificationStrategy->sendNotification(notificationContent);
+        }
+    }
+};
+
+int main() {
+    NotificationService* notificationService = NotificationService::getInstance();
+
+    Logger* logger = new Logger();
+    NotificationEngine* notificationEngine = new NotificationEngine();
+
+    notificationEngine->addNotificationStrategy(new EmailStrategy("random.person@gmail.com"));
+    notificationEngine->addNotificationStrategy(new SMSStrategy("+91 9876543210"));
+    notificationEngine->addNotificationStrategy(new PopUpStrategy());
+
+    INotification* notification = new SimpleNotification("Your order has been shipped!");
+    notification = new TimestampDecorator(notification);
+    notification = new SignatureDecorator(notification, "Customer Care");
+
+    notificationService->sendNotification(notification);
+
+    delete logger;
+    delete notificationEngine;
+    return 0;
+}
+```
